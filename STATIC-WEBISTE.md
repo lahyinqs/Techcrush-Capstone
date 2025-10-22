@@ -45,4 +45,5 @@
 -	Verify public access
 
 2. I run the website created and it works fine, responsive and mobile friendly
-[Index](index.html)3. 
+![alt text](index.PNG)
+![alt text](Aboutus.PNG)
