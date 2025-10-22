@@ -45,4 +45,4 @@
 -	Verify public access
 
 2. I run the website created and it works fine, responsive and mobile friendly
-3. [text](index.html)
+[Index](index.html)3. 
