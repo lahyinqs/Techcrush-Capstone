@@ -46,4 +46,6 @@
 
 2. I run the website created and it works fine, responsive and mobile friendly
 ![alt text](index.PNG)
-![alt text](Aboutus.PNG)
+![
+
+](Aboutus.PNG)

@@ -1,0 +1,28 @@
+name: Deploy Techcrush Website
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Run Network Setup
+        run: bash automation/1_network_setup.sh
+      - name: Run Security Setup
+        run: bash automation/2_security_setup.sh
+      - name: Run EC2 Instance Setup
+        run: bash automation/3_instance_setup.sh
+      - name: Run Web Server Setup
+        run: bash automation/4_webserver_setup.sh

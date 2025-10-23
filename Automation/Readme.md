@@ -1,32 +1,28 @@
-cat << EOF > ~/Techcrush-Capstone/README.md
-# Techcrush Capstone Project
+# 🧠 Techcrush Automation Setup
 
-This project deploys a static website on AWS EC2 with NGINX, automated via GitHub Actions.
+This folder contains all scripts for automated static website deployment to AWS EC2.
 
-## Project Structure
-- \`1_network_setup.sh\` to \`4_webserver_setup.sh\`: Manual scripts for VPC, security group, EC2, and NGINX setup.
-- \`5_automation_setup.sh\`: Sets up the original repository (manual setup).
-- \`automation/\`: Scripts for automated deployment.
-- \`screenshots/\`: Project screenshots.
+## ⚙️ Files
+| File | Description |
+|------|--------------|
+| `setup_server.sh` | Installs Nginx and deploys the static site to `/usr/share/nginx/html` |
+| `deploy.yml` | GitHub Actions workflow — triggers on every push to `main` |
+| `ci_cd_full_auto.sh` | Optional helper to push automation setup to GitHub |
+| `README.md` | This documentation file |
 
-## Screenshots
-- Website: ![Website](screenshots/website_output.png)
-- EC2 Console: ![EC2](screenshots/ec2_console.png)
-- GitHub Actions: ![Workflow](screenshots/github_actions.png)
+## 🔑 Prerequisites
+1. Your EC2 instance must allow SSH (port 22) and HTTP (port 80).
+2. Upload your private SSH key to GitHub Secrets as `EC2_SSH_KEY`.
+3. Push new commits to the `main` branch — GitHub Actions will auto-deploy to EC2.
 
-## Setup Instructions
-1. Clone: \`git clone https://github.com/<lahyinqs>/Techcrush-Capstone.git\`
-2. Add AWS secrets to GitHub (\`AWS_ACCESS_KEY_ID\`, \`AWS_SECRET_ACCESS_KEY\`).
-3. Run the workflow from the Actions tab.
-4. Visit the EC2 public IP in a browser.
+## 🚀 Deployment Flow
+1. Developer commits changes to the repo.  
+2. GitHub Actions runs `deploy.yml`.  
+3. Files are securely transferred to EC2 via SSH.  
+4. `setup_server.sh` runs automatically to update Nginx and publish the site.  
+5. Visit your live site at **http://54.83.163.104/**.
 
-## Automation
-- Run \`automation/5_automation_setup.sh\` to set up GitHub Actions.
-- Workflow (\`deploy.yml\`) automates Modules 1–4 in the \`automation/\` folder.
+---
 
-## Requirements
-- AWS CLI
-- GitHub CLI
-- Git
-- IAM role \`SSMInstanceProfile\` for EC2
-EOF
+🧩 **Maintainer:** [@lahyinqs](https://github.com/lahyinqs)
+
