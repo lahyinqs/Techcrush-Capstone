@@ -22,6 +22,7 @@ This folder contains all scripts for automated static website deployment to AWS 
 4. `setup_server.sh` runs automatically to update Nginx and publish the site.  
 5. Visit your live site at **http://54.83.163.104/**.
 
+Secret key added 
 ---
 
 🧩 **Maintainer:** [@lahyinqs](https://github.com/lahyinqs)
