@@ -1,73 +1,121 @@
 #!/bin/bash
 set -e
 
-# === CONFIGURATION ===
-REPO="lahyinqs/Techcrush-Capstone"
-EC2_HOST="54.83.163.104"
-EC2_USER="ubuntu"
-SSH_KEY_PATH="$HOME/.ssh/techcrush_cicd_key"
+echo "🚀 Starting Techcrush CI/CD automation..."
 
-echo "🚀 Starting full Techcrush CI/CD setup..."
+# ================================
+# 1️⃣ CONFIGURATION
+# ================================
+AWS_REGION="us-east-1"
+PROJECT_NAME="Techcrush"
+VPC_NAME="${PROJECT_NAME}-VPC"
+SUBNET_NAME="${PROJECT_NAME}-Subnet"
+SG_NAME="${PROJECT_NAME}-Web-SG"
+AMI_ID="ami-0c02fb55956c7d316"  # Amazon Linux 2 (us-east-1)
+INSTANCE_TYPE="t2.micro"
+KEY_NAME="${PROJECT_NAME}-Key"
+HTML_DIR="/var/www/html"
 
-# --- STEP 1: Generate SSH Keypair if not exists ---
-if [ ! -f "$SSH_KEY_PATH" ]; then
-    echo "🔑 Generating SSH keypair for GitHub Actions..."
-    ssh-keygen -t rsa -b 4096 -C "techcrush-cicd" -f "$SSH_KEY_PATH" -N ""
+echo "✅ Configuration loaded for project: $PROJECT_NAME"
+
+# ================================
+# 2️⃣ CREATE KEY PAIR
+# ================================
+if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region $AWS_REGION >/dev/null 2>&1; then
+  echo "🔑 Creating new key pair..."
+  aws ec2 create-key-pair --key-name "$KEY_NAME" \
+    --query "KeyMaterial" --output text > "${KEY_NAME}.pem"
+  chmod 400 "${KEY_NAME}.pem"
 else
-    echo "✅ SSH key already exists at $SSH_KEY_PATH"
+  echo "ℹ️ Key pair $KEY_NAME already exists, skipping..."
 fi
 
-# --- STEP 2: Add Public Key to GitHub Account ---
-PUB_KEY=$(cat "$SSH_KEY_PATH.pub")
-echo "📤 Uploading SSH public key to GitHub account..."
-gh ssh-key add "$SSH_KEY_PATH.pub" -t "Techcrush-CI/CD Key"
+# ================================
+# 3️⃣ CREATE VPC
+# ================================
+VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 \
+  --region $AWS_REGION \
+  --query "Vpc.VpcId" --output text)
+echo "✅ VPC created: $VPC_ID"
 
-# --- STEP 3: Create GitHub Secrets for Actions ---
-echo "🔐 Adding GitHub Action Secrets..."
-gh secret set EC2_HOST -b"$EC2_HOST" -R "$REPO"
-gh secret set EC2_USER -b"$EC2_USER" -R "$REPO"
-gh secret set EC2_SSH_KEY -b"$(cat $SSH_KEY_PATH)" -R "$REPO"
+# Tagging VPC
+aws ec2 create-tags --resources "$VPC_ID" --tags Key=Name,Value="$VPC_NAME"
 
-echo "✅ GitHub Secrets successfully created for $REPO"
+# ================================
+# 4️⃣ CREATE SUBNET
+# ================================
+SUBNET_ID=$(aws ec2 create-subnet \
+  --vpc-id "$VPC_ID" \
+  --cidr-block 10.0.1.0/24 \
+  --availability-zone "${AWS_REGION}a" \
+  --query "Subnet.SubnetId" --output text)
 
-# --- STEP 4: Setup GitHub Actions Workflow ---
-mkdir -p .github/workflows
-cat > .github/workflows/deploy.yml <<'EOF'
-name: Techcrush CI/CD Deploy
+aws ec2 create-tags --resources "$SUBNET_ID" --tags Key=Name,Value="$SUBNET_NAME"
+echo "✅ Subnet created: $SUBNET_ID"
 
-on:
-  push:
-    branches:
-      - main
+# ================================
+# 5️⃣ CREATE SECURITY GROUP
+# ================================
+SG_ID=$(aws ec2 create-security-group \
+  --group-name "$SG_NAME" \
+  --description "Allow HTTP and SSH" \
+  --vpc-id "$VPC_ID" \
+  --query "GroupId" --output text)
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
+echo "✅ Security Group created: $SG_ID"
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+# Allow SSH + HTTP inbound rules
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+  --protocol tcp --port 22 --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+  --protocol tcp --port 80 --cidr 0.0.0.0/0
 
-      - name: Copy files to EC2
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-        run: |
-          echo "$EC2_SSH_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no -i private_key.pem" ./ $EC2_USER@$EC2_HOST:/var/www/html/
-          ssh -i private_key.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "sudo systemctl restart nginx"
-          rm -f private_key.pem
+# ================================
+# 6️⃣ LAUNCH EC2 INSTANCE
+# ================================
+echo "🖥️ Launching EC2 instance..."
+INSTANCE_ID=$(aws ec2 run-instances \
+  --image-id "$AMI_ID" \
+  --count 1 \
+  --instance-type "$INSTANCE_TYPE" \
+  --key-name "$KEY_NAME" \
+  --security-group-ids "$SG_ID" \
+  --subnet-id "$SUBNET_ID" \
+  --associate-public-ip-address \
+  --query "Instances[0].InstanceId" \
+  --output text)
+
+echo "✅ EC2 instance launched: $INSTANCE_ID"
+
+# Wait for it to start
+aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+echo "⏳ Instance is now running..."
+
+# Get public IP
+PUBLIC_IP=$(aws ec2 describe-instances \
+  --instance-ids "$INSTANCE_ID" \
+  --query "Reservations[0].Instances[0].PublicIpAddress" \
+  --output text)
+echo "🌍 Public IP: http://$PUBLIC_IP"
+
+# ================================
+# 7️⃣ DEPLOY WEBSITE
+# ================================
+echo "📦 Deploying website files..."
+
+# Copy all HTML and assets to EC2
+scp -o StrictHostKeyChecking=no -i "${KEY_NAME}.pem" -r index.html about.html contact.html techcrush_logo.png ubuntu@"$PUBLIC_IP":/tmp/
+
+# SSH into instance and configure NGINX
+ssh -o StrictHostKeyChecking=no -i "${KEY_NAME}.pem" ubuntu@"$PUBLIC_IP" <<EOF
+  sudo apt update -y
+  sudo apt install nginx -y
+  sudo rm -rf $HTML_DIR/*
+  sudo mv /tmp/*.html $HTML_DIR/
+  sudo mv /tmp/techcrush_logo.png $HTML_DIR/
+  sudo systemctl enable nginx
+  sudo systemctl restart nginx
 EOF
 
-echo "✅ GitHub Actions workflow created."
-
-# --- STEP 5: Commit and Push Changes ---
-echo "📦 Pushing files to GitHub repository..."
-git add .
-git commit -m "Added Techcrush CI/CD pipeline"
-git push origin main
-
-echo "🎉 CI/CD pipeline setup complete!"
-echo "Every time you push to main, your website will auto-deploy to EC2: http://$EC2_HOST/"
+echo "✅ Website deployed successfully!"
+echo "🌐 Access it at: http://$PUBLIC_IP"
