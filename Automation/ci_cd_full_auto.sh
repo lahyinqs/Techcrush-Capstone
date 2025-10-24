@@ -54,6 +54,20 @@ aws ec2 create-tags --resources "$SUBNET_ID" --tags Key=Name,Value="$SUBNET_NAME
 echo "✅ Subnet created: $SUBNET_ID"
 
 # ================================
+# 🌐 INTERNET GATEWAY & ROUTING
+# ================================
+IGW_ID=$(aws ec2 create-internet-gateway --query "InternetGateway.InternetGatewayId" --output text)
+aws ec2 attach-internet-gateway --vpc-id "$VPC_ID" --internet-gateway-id "$IGW_ID"
+echo "✅ Internet Gateway created and attached: $IGW_ID"
+
+# Create route table and route
+RT_ID=$(aws ec2 create-route-table --vpc-id "$VPC_ID" --query "RouteTable.RouteTableId" --output text)
+aws ec2 create-route --route-table-id "$RT_ID" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID"
+aws ec2 associate-route-table --route-table-id "$RT_ID" --subnet-id "$SUBNET_ID"
+echo "✅ Route table configured: $RT_ID"
+
+
+# ================================
 # 5️⃣ CREATE SECURITY GROUP
 # ================================
 SG_ID=$(aws ec2 create-security-group \
