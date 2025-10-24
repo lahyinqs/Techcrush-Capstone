@@ -1,135 +1,100 @@
 #!/bin/bash
 set -e
-
 echo "🚀 Starting Techcrush CI/CD automation..."
 
-# ================================
-# 1️⃣ CONFIGURATION
-# ================================
-AWS_REGION="us-east-1"
 PROJECT_NAME="Techcrush"
-VPC_NAME="${PROJECT_NAME}-VPC"
-SUBNET_NAME="${PROJECT_NAME}-Subnet"
-SG_NAME="${PROJECT_NAME}-Web-SG"
-AMI_ID="ami-0c02fb55956c7d316"  # Amazon Linux 2 (us-east-1)
-INSTANCE_TYPE="t2.micro"
-KEY_NAME="${PROJECT_NAME}-Key"
-HTML_DIR="/var/www/html"
+KEY_NAME="techcrush-key"
+KEY_PATH="$KEY_NAME.pem"
+REGION="us-east-1"
 
 echo "✅ Configuration loaded for project: $PROJECT_NAME"
 
-# ================================
-# 2️⃣ CREATE KEY PAIR
-# ================================
-if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region $AWS_REGION >/dev/null 2>&1; then
-  echo "🔑 Creating new key pair..."
-  aws ec2 create-key-pair --key-name "$KEY_NAME" \
-    --query "KeyMaterial" --output text > "${KEY_NAME}.pem"
-  chmod 400 "${KEY_NAME}.pem"
+# === 1️⃣ Key Pair Setup ===
+echo "🔑 Checking for existing key pair..."
+if aws ec2 describe-key-pairs --key-name "$KEY_NAME" --region $REGION >/dev/null 2>&1; then
+  echo "ℹ️ Key pair $KEY_NAME already exists, skipping creation..."
 else
-  echo "ℹ️ Key pair $KEY_NAME already exists, skipping..."
+  echo "✅ Creating new key pair: $KEY_NAME"
+  aws ec2 create-key-pair --key-name "$KEY_NAME" --region $REGION \
+    --query 'KeyMaterial' --output text > "$KEY_PATH"
+  chmod 400 "$KEY_PATH"
+  echo "🔐 Key saved to $KEY_PATH with restricted permissions."
 fi
 
-# ================================
-# 3️⃣ CREATE VPC
-# ================================
+# === 2️⃣ Create VPC ===
 VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 \
-  --region $AWS_REGION \
-  --query "Vpc.VpcId" --output text)
+  --region $REGION --query 'Vpc.VpcId' --output text)
+aws ec2 modify-vpc-attribute --vpc-id "$VPC_ID" --enable-dns-support "{\"Value\":true}" --region $REGION
+aws ec2 modify-vpc-attribute --vpc-id "$VPC_ID" --enable-dns-hostnames "{\"Value\":true}" --region $REGION
 echo "✅ VPC created: $VPC_ID"
 
-# Tagging VPC
-aws ec2 create-tags --resources "$VPC_ID" --tags Key=Name,Value="$VPC_NAME"
-
-# ================================
-# 4️⃣ CREATE SUBNET
-# ================================
-SUBNET_ID=$(aws ec2 create-subnet \
-  --vpc-id "$VPC_ID" \
-  --cidr-block 10.0.1.0/24 \
-  --availability-zone "${AWS_REGION}a" \
-  --query "Subnet.SubnetId" --output text)
-
-aws ec2 create-tags --resources "$SUBNET_ID" --tags Key=Name,Value="$SUBNET_NAME"
+# === 3️⃣ Create Subnet ===
+SUBNET_ID=$(aws ec2 create-subnet --vpc-id "$VPC_ID" --cidr-block 10.0.1.0/24 \
+  --availability-zone ${REGION}a --query 'Subnet.SubnetId' --output text --region $REGION)
 echo "✅ Subnet created: $SUBNET_ID"
 
-# ================================
-# 🌐 INTERNET GATEWAY & ROUTING
-# ================================
-IGW_ID=$(aws ec2 create-internet-gateway --query "InternetGateway.InternetGatewayId" --output text)
-aws ec2 attach-internet-gateway --vpc-id "$VPC_ID" --internet-gateway-id "$IGW_ID"
+# === 4️⃣ Internet Gateway ===
+IGW_ID=$(aws ec2 create-internet-gateway --region $REGION --query 'InternetGateway.InternetGatewayId' --output text)
+aws ec2 attach-internet-gateway --vpc-id "$VPC_ID" --internet-gateway-id "$IGW_ID" --region $REGION
 echo "✅ Internet Gateway created and attached: $IGW_ID"
 
-# Create route table and route
-RT_ID=$(aws ec2 create-route-table --vpc-id "$VPC_ID" --query "RouteTable.RouteTableId" --output text)
-aws ec2 create-route --route-table-id "$RT_ID" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID"
-aws ec2 associate-route-table --route-table-id "$RT_ID" --subnet-id "$SUBNET_ID"
-echo "✅ Route table configured: $RT_ID"
+# === 5️⃣ Route Table ===
+RTB_ID=$(aws ec2 create-route-table --vpc-id "$VPC_ID" --region $REGION --query 'RouteTable.RouteTableId' --output text)
+aws ec2 create-route --route-table-id "$RTB_ID" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID" --region $REGION
+aws ec2 associate-route-table --subnet-id "$SUBNET_ID" --route-table-id "$RTB_ID" --region $REGION
+echo "✅ Route table configured: $RTB_ID"
 
-
-# ================================
-# 5️⃣ CREATE SECURITY GROUP
-# ================================
-SG_ID=$(aws ec2 create-security-group \
-  --group-name "$SG_NAME" \
-  --description "Allow HTTP and SSH" \
-  --vpc-id "$VPC_ID" \
-  --query "GroupId" --output text)
-
+# === 6️⃣ Security Group ===
+SG_ID=$(aws ec2 create-security-group --group-name "${PROJECT_NAME}-SG" --description "Security group for $PROJECT_NAME" \
+  --vpc-id "$VPC_ID" --region $REGION --query 'GroupId' --output text)
 echo "✅ Security Group created: $SG_ID"
 
-# Allow SSH + HTTP inbound rules
-aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
-  --protocol tcp --port 22 --cidr 0.0.0.0/0
-aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
-  --protocol tcp --port 80 --cidr 0.0.0.0/0
+# Allow SSH (22) and HTTP (80)
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 --region $REGION
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region $REGION
+echo "✅ Inbound rules added for ports 22 and 80"
 
-# ================================
-# 6️⃣ LAUNCH EC2 INSTANCE
-# ================================
+# === 7️⃣ Launch EC2 Instance ===
 echo "🖥️ Launching EC2 instance..."
 INSTANCE_ID=$(aws ec2 run-instances \
-  --image-id "$AMI_ID" \
+  --image-id ami-0c7217cdde317cfec \
   --count 1 \
-  --instance-type "$INSTANCE_TYPE" \
+  --instance-type t2.micro \
   --key-name "$KEY_NAME" \
   --security-group-ids "$SG_ID" \
   --subnet-id "$SUBNET_ID" \
   --associate-public-ip-address \
-  --query "Instances[0].InstanceId" \
+  --region $REGION \
+  --query 'Instances[0].InstanceId' \
   --output text)
 
 echo "✅ EC2 instance launched: $INSTANCE_ID"
 
-# Wait for it to start
-aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
-echo "⏳ Instance is now running..."
-
-# Get public IP
-PUBLIC_IP=$(aws ec2 describe-instances \
-  --instance-ids "$INSTANCE_ID" \
-  --query "Reservations[0].Instances[0].PublicIpAddress" \
-  --output text)
+aws ec2 wait instance-running --instance-ids "$INSTANCE_ID" --region $REGION
+PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+  --region $REGION --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
 echo "🌍 Public IP: http://$PUBLIC_IP"
 
-# ================================
-# 7️⃣ DEPLOY WEBSITE
-# ================================
+# === 8️⃣ Deploy Static Website Files ===
 echo "📦 Deploying website files..."
+chmod 400 "$KEY_PATH"
 
-# Copy all HTML and assets to EC2
-scp -o StrictHostKeyChecking=no -i "${KEY_NAME}.pem" -r index.html about.html contact.html techcrush_logo.png ubuntu@"$PUBLIC_IP":/tmp/
+echo "⏳ Waiting for EC2 to be fully ready..."
+sleep 30
 
-# SSH into instance and configure NGINX
-ssh -o StrictHostKeyChecking=no -i "${KEY_NAME}.pem" ubuntu@"$PUBLIC_IP" <<EOF
+scp -i "$KEY_PATH" -o StrictHostKeyChecking=no -r index.html Aboutus.html Contact-us.html ubuntu@"$PUBLIC_IP":/tmp/ || {
+  echo "❌ SCP failed — check network or SSH key."
+  exit 1
+}
+
+ssh -i "$KEY_PATH" -o StrictHostKeyChecking=no ubuntu@"$PUBLIC_IP" <<'EOF'
+  set -e
   sudo apt update -y
-  sudo apt install nginx -y
-  sudo rm -rf $HTML_DIR/*
-  sudo mv /tmp/*.html $HTML_DIR/
-  sudo mv /tmp/techcrush_logo.png $HTML_DIR/
-  sudo systemctl enable nginx
-  sudo systemctl restart nginx
+  sudo apt install apache2 -y
+  sudo mv /tmp/*.html /var/www/html/
+  sudo systemctl restart apache2
+  echo "✅ Website deployed successfully!"
 EOF
 
-echo "✅ Website deployed successfully!"
-echo "🌐 Access it at: http://$PUBLIC_IP"
+echo "🎉 Deployment completed successfully!"
+echo "🌐 Access your website at: http://$PUBLIC_IP"

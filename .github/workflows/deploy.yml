@@ -1,32 +1,32 @@
-name: Techcrush CI/CD Pipeline
+name: 🚀 Techcrush CI/CD Deployment
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      # 1️⃣ Checkout code
+      - name: 📦 Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
+      # 2️⃣ Configure AWS credentials securely
+      - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1  # Change to your region
+          aws-region: us-east-1
 
-      - name: Grant execute permission to automation script
+      # 3️⃣ Make the script executable
+      - name: 🧾 Grant execution permission
         run: chmod +x Automation/ci_cd_full_auto.sh
 
-      - name: Run full automation script
+      # 4️⃣ Run the deployment script
+      - name: 🚀 Run CI/CD Deployment Script
         run: bash Automation/ci_cd_full_auto.sh
-
-      - name: Verify Deployment
-        run: |
-          echo "Deployment completed successfully!"
