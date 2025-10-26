@@ -72,14 +72,32 @@ INSTANCE_ID=$(aws ec2 run-instances \
   --query 'Instances[0].InstanceId' --output text)
 echo "✅ EC2 instance launched: $INSTANCE_ID"
 
-# Wait for instance to be ready
-echo "⏳ Waiting for instance to be ready..."
+# Wait for instance to be running
+echo "⏳ Waiting for instance to be in 'running' state..."
 aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 
-# Get public IP
-INSTANCE_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
-  --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-echo "🌍 Public IP: http://$INSTANCE_IP"
+# --- Retrieve Public IP with retry ---
+echo "🔍 Fetching Public IP..."
+MAX_RETRIES=10
+SLEEP_SECONDS=10
+for ((i=1; i<=MAX_RETRIES; i++)); do
+  INSTANCE_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+
+  if [[ "$INSTANCE_IP" != "None" && -n "$INSTANCE_IP" ]]; then
+    echo "🌍 Public IP detected: http://$INSTANCE_IP"
+    break
+  else
+    echo "⏳ Waiting for Public IP (attempt $i/$MAX_RETRIES)..."
+    sleep $SLEEP_SECONDS
+  fi
+done
+
+# --- Validate Public IP ---
+if [[ "$INSTANCE_IP" == "None" || -z "$INSTANCE_IP" ]]; then
+  echo "❌ ERROR: Failed to get Public IP after several attempts. Please check EC2 console."
+  exit 1
+fi
 
 # --- Install Apache and deploy website ---
 echo "🧱 Configuring server..."
