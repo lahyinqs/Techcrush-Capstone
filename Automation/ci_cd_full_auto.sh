@@ -1,131 +1,162 @@
 #!/bin/bash
-set -e  # Stop script on any error
+set -e
 
 echo "🚀 Starting Techcrush CI/CD Automation..."
 
-# ======== CONFIGURATION ==========
-PROJECT_NAME="Techcrush"
+# ============================================
+# 1️⃣ ENVIRONMENT VARIABLES
+# ============================================
+AWS_REGION="us-east-1"
 KEY_NAME="techcrush-key"
-PEM_FILE="techcrush-key.pem"
-REGION="us-east-1"
-AMI_ID="ami-0c398cb65a93047f2"   # Ubuntu 22.04 LTS
+LOCAL_KEY_PATH="/c/Techcrush/techcrush-key.pem"
+AMI_ID=$(aws ec2 describe-images \
+    --region "$AWS_REGION" \
+    --owners amazon \
+    --filters "Name=name,Values=amzn2-ami-hvm-2.0.*-x86_64-gp2" \
+              "Name=state,Values=available" \
+    --query "reverse(sort_by(Images, &CreationDate))[:1].ImageId" \
+    --output text)
+
 INSTANCE_TYPE="t2.micro"
-TAG="TechcrushServer"
-# =================================
+TAG_NAME="Techcrush-Capstone"
+VPC_NAME="Techcrush-VPC"
+SUBNET_CIDR="10.0.1.0/24"
+SECURITY_GROUP_NAME="techcrush-sg"
+HTML_PATH="index.html"
 
-# --- Check for required files ---
-if [ ! -f "$PEM_FILE" ]; then
-  echo "❌ ERROR: PEM key file ($PEM_FILE) not found!"
-  exit 1
-fi
-
-# --- Create key pair if not exists ---
+# ============================================
+# 2️⃣ CREATE OR REUSE KEY PAIR
+# ============================================
 echo "🔑 Checking for existing key pair..."
-if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region "$REGION" >/dev/null 2>&1; then
-  echo "🆕 Creating new key pair..."
-  aws ec2 create-key-pair --key-name "$KEY_NAME" --region "$REGION" \
-    --query "KeyMaterial" --output text > "$PEM_FILE"
-  chmod 400 "$PEM_FILE"
+if aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+    echo "ℹ️ Key pair $KEY_NAME already exists, skipping creation..."
 else
-  echo "ℹ️ Key pair $KEY_NAME already exists, skipping creation..."
+    echo "🆕 Creating new key pair..."
+    aws ec2 create-key-pair --key-name "$KEY_NAME" \
+        --query "KeyMaterial" --output text > "$LOCAL_KEY_PATH"
+    chmod 400 "$LOCAL_KEY_PATH"
 fi
 
-# --- Create VPC ---
-VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 \
-  --region "$REGION" --query 'Vpc.VpcId' --output text)
-echo "✅ VPC created: $VPC_ID"
-aws ec2 create-tags --resources "$VPC_ID" --tags Key=Name,Value="$PROJECT_NAME-VPC"
+# ============================================
+# 3️⃣ CREATE NETWORKING RESOURCES
+# ============================================
+echo "🌐 Setting up VPC, Subnet, IGW, and Route Table..."
 
-# --- Create Subnet ---
-SUBNET_ID=$(aws ec2 create-subnet --vpc-id "$VPC_ID" \
-  --cidr-block 10.0.1.0/24 --availability-zone "${REGION}a" \
-  --query 'Subnet.SubnetId' --output text)
+VPC_ID=$(aws ec2 create-vpc \
+    --cidr-block 10.0.0.0/16 \
+    --query "Vpc.VpcId" --output text --region "$AWS_REGION")
+aws ec2 create-tags --resources "$VPC_ID" --tags Key=Name,Value=$VPC_NAME
+echo "✅ VPC created: $VPC_ID"
+
+SUBNET_ID=$(aws ec2 create-subnet \
+    --vpc-id "$VPC_ID" \
+    --cidr-block "$SUBNET_CIDR" \
+    --query "Subnet.SubnetId" --output text --region "$AWS_REGION")
 echo "✅ Subnet created: $SUBNET_ID"
 
-# --- Create and attach Internet Gateway ---
-IGW_ID=$(aws ec2 create-internet-gateway --region "$REGION" \
-  --query 'InternetGateway.InternetGatewayId' --output text)
-echo "✅ Internet Gateway created: $IGW_ID"
+IGW_ID=$(aws ec2 create-internet-gateway \
+    --query "InternetGateway.InternetGatewayId" --output text --region "$AWS_REGION")
 aws ec2 attach-internet-gateway --vpc-id "$VPC_ID" --internet-gateway-id "$IGW_ID"
+echo "✅ Internet Gateway created: $IGW_ID"
 
-# --- Create Route Table ---
-RT_ID=$(aws ec2 create-route-table --vpc-id "$VPC_ID" \
-  --query 'RouteTable.RouteTableId' --output text)
-aws ec2 create-route --route-table-id "$RT_ID" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID" >/dev/null
-aws ec2 associate-route-table --subnet-id "$SUBNET_ID" --route-table-id "$RT_ID" >/dev/null
-echo "✅ Route table configured: $RT_ID"
+ROUTE_TABLE_ID=$(aws ec2 create-route-table \
+    --vpc-id "$VPC_ID" \
+    --query "RouteTable.RouteTableId" --output text --region "$AWS_REGION")
+aws ec2 create-route --route-table-id "$ROUTE_TABLE_ID" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID"
+aws ec2 associate-route-table --subnet-id "$SUBNET_ID" --route-table-id "$ROUTE_TABLE_ID"
+echo "✅ Route table configured: $ROUTE_TABLE_ID"
 
-# --- Create Security Group ---
-SG_ID=$(aws ec2 create-security-group --group-name "$PROJECT_NAME-SG" \
-  --description "Security group for $PROJECT_NAME" --vpc-id "$VPC_ID" \
-  --query 'GroupId' --output text)
-aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0
-aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0
+# ============================================
+# 4️⃣ CREATE SECURITY GROUP
+# ============================================
+echo "🛡️ Creating Security Group..."
+SG_ID=$(aws ec2 create-security-group \
+    --group-name "$SECURITY_GROUP_NAME" \
+    --description "Techcrush web access" \
+    --vpc-id "$VPC_ID" \
+    --region "$AWS_REGION" \
+    --query "GroupId" --output text)
+
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+    --protocol tcp --port 22 --cidr 0.0.0.0/0 --region "$AWS_REGION"
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+    --protocol tcp --port 80 --cidr 0.0.0.0/0 --region "$AWS_REGION"
 echo "✅ Security Group created: $SG_ID"
 
-# --- Launch EC2 Instance ---
+# ============================================
+# 5️⃣ LAUNCH EC2 INSTANCE
+# ============================================
+echo "🚀 Launching EC2 instance..."
+
 INSTANCE_ID=$(aws ec2 run-instances \
-  --image-id ami-0c55b159cbfafe1f0 \
-  --count 1 \
-  --instance-type t2.micro \
-  --key-name techcrush-key \
-  --security-group-ids "$SECURITY_GROUP_ID" \
-  --subnet-id "$SUBNET_ID" \
-  --associate-public-ip-address \
-  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=Techcrush-Server}]" \
-  --query 'Instances[0].InstanceId' \
-  --output text)
+    --image-id "$AMI_ID" \
+    --count 1 \
+    --instance-type "$INSTANCE_TYPE" \
+    --key-name "$KEY_NAME" \
+    --security-group-ids "$SG_ID" \
+    --subnet-id "$SUBNET_ID" \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_NAME}]" \
+    --query "Instances[0].InstanceId" \
+    --region "$AWS_REGION" --output text)
 
-# Wait for instance to be running
-echo "⏳ Waiting for instance to be in 'running' state..."
-aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+echo "✅ EC2 instance launched: $INSTANCE_ID"
 
-# --- Retrieve Public IP with retry ---
+echo "⏳ Waiting for instance to be running..."
+aws ec2 wait instance-running --instance-ids "$INSTANCE_ID" --region "$AWS_REGION"
+
 echo "🔍 Fetching Public IP..."
-MAX_RETRIES=10
-SLEEP_SECONDS=10
-for ((i=1; i<=MAX_RETRIES; i++)); do
-  INSTANCE_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
-    --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+PUBLIC_IP=$(aws ec2 describe-instances \
+    --instance-ids "$INSTANCE_ID" \
+    --query "Reservations[0].Instances[0].PublicIpAddress" \
+    --region "$AWS_REGION" \
+    --output text)
 
-  if [[ "$INSTANCE_IP" != "None" && -n "$INSTANCE_IP" ]]; then
-    echo "🌍 Public IP detected: http://$INSTANCE_IP"
-    break
-  else
-    echo "⏳ Waiting for Public IP (attempt $i/$MAX_RETRIES)..."
-    sleep $SLEEP_SECONDS
-  fi
-done
-
-# --- Validate Public IP ---
-if [[ "$INSTANCE_IP" == "None" || -z "$INSTANCE_IP" ]]; then
-  echo "❌ ERROR: Failed to get Public IP after several attempts. Please check EC2 console."
-  exit 1
+if [ "$PUBLIC_IP" == "None" ] || [ -z "$PUBLIC_IP" ]; then
+    echo "❌ ERROR: Failed to retrieve Public IP."
+    exit 1
 fi
 
-# --- Install Apache and deploy website ---
-echo "🧱 Configuring server..."
-ssh -o StrictHostKeyChecking=no -i "$PEM_FILE" ubuntu@$INSTANCE_IP <<'EOF'
-  sudo apt update -y
-  sudo apt install apache2 -y
-  sudo systemctl enable apache2
-  sudo systemctl start apache2
+echo "🌍 Public IP: http://$PUBLIC_IP"
+
+# ============================================
+# 6️⃣ DEPLOY WEBSITE FILES
+# ============================================
+echo "📤 Deploying website to EC2..."
+
+if [ ! -f "$LOCAL_KEY_PATH" ]; then
+    echo "❌ ERROR: PEM key not found at $LOCAL_KEY_PATH"
+    exit 1
+fi
+
+# Wait briefly for SSH to become available
+sleep 20
+
+scp -i "$LOCAL_KEY_PATH" -o StrictHostKeyChecking=no *.html ec2-user@"$PUBLIC_IP":/home/ec2-user/
+
+ssh -i "$LOCAL_KEY_PATH" -o StrictHostKeyChecking=no ec2-user@"$PUBLIC_IP" <<EOF
+    sudo yum update -y
+    sudo yum install -y httpd
+    sudo systemctl start httpd
+    sudo systemctl enable httpd
+    sudo mv /home/ec2-user/*.html /var/www/html/
+    sudo chown apache:apache /var/www/html/*.html
 EOF
-echo "✅ Apache installed successfully."
 
-# --- Deploy website files using rsync (auto-detects updates/deletes) ---
-echo "📂 Syncing website files..."
-rsync -avz --delete -e "ssh -i $PEM_FILE -o StrictHostKeyChecking=no" \
-  --exclude "Automation/" --exclude ".github/" \
-  --exclude ".git/" --exclude "Screenshots/*.PNG" \
-  ./ ubuntu@$INSTANCE_IP:/tmp/techcrush/
+echo "✅ Deployment complete! Visit your site at: http://$PUBLIC_IP"
 
-# --- Move to Apache web root ---
-ssh -i "$PEM_FILE" -o StrictHostKeyChecking=no ubuntu@$INSTANCE_IP <<'EOF'
-  sudo rm -rf /var/www/html/*
-  sudo mv /tmp/techcrush/* /var/www/html/
-  sudo systemctl restart apache2
-EOF
+# ============================================
+# 7️⃣ AUTO DETECT FILE CHANGES (LOCAL)
+# ============================================
+echo "🔍 Checking for local file changes..."
+CHANGED_FILES=$(git status --porcelain | grep ".html" || true)
 
-echo "✅ Website deployed and synchronized successfully!"
-echo "🌐 Access your site here: http://$INSTANCE_IP"
+if [ -n "$CHANGED_FILES" ]; then
+    echo "🌀 Detected updates/deletions in HTML files..."
+    scp -i "$LOCAL_KEY_PATH" -o StrictHostKeyChecking=no *.html ec2-user@"$PUBLIC_IP":/home/ec2-user/
+    ssh -i "$LOCAL_KEY_PATH" -o StrictHostKeyChecking=no ec2-user@"$PUBLIC_IP" "sudo mv /home/ec2-user/*.html /var/www/html/"
+    echo "♻️ Website refreshed with latest changes!"
+else
+    echo "✅ No changes detected. Website already up-to-date."
+fi
+
+echo "🎉 Techcrush CI/CD pipeline executed successfully!"

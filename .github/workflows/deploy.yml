@@ -4,14 +4,17 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:  # Allow manual trigger from GitHub UI
+    paths:
+      - "*.html"
+      - "Automation/**"
+  workflow_dispatch: # Allow manual trigger from GitHub UI
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout code
+      # 1️⃣ Checkout your repository
       - name: 📦 Checkout repository
         uses: actions/checkout@v4
 
@@ -23,18 +26,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      # 3️⃣ Create PEM key file from GitHub secret (secure)
-      - name: 🔑 Create PEM key file
-        env:
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      # 3️⃣ Create PEM key file from GitHub secret
+      - name: 🗝️ Create SSH Key file
         run: |
-          echo "$EC2_SSH_KEY" > techcrush-key.pem
-          chmod 600 techcrush-key.pem
+          mkdir -p /home/runner/work/Techcrush/Techcrush
+          echo "${{ secrets.EC2_SSH_KEY }}" > /home/runner/work/Techcrush/Techcrush/techcrush-key.pem
+          chmod 400 /home/runner/work/Techcrush/Techcrush/techcrush-key.pem
 
-      # 4️⃣ Make the deployment script executable
-      - name: 🧾 Grant execution permission
+      # 4️⃣ Make deployment script executable
+      - name: 🧾 Make CI/CD script executable
         run: chmod +x Automation/ci_cd_full_auto.sh
 
-      # 5️⃣ Run the deployment script
+      # 5️⃣ Run deployment automation
       - name: 🚀 Run CI/CD Deployment Script
-        run: bash Automation/ci_cd_full_auto.sh
+        run: |
+          echo "Running Techcrush CI/CD Pipeline..."
+          bash Automation/ci_cd_full_auto.sh
