@@ -25,8 +25,8 @@ jobs:
       # Create PEM key file from secret
       - name: Create PEM key file
         run: |
-        echo "$EC2_SSH_KEY" > techcrush-key.pem
-        chmod 600 techcrush-key.pem
+          echo "$EC2_SSH_KEY" > techcrush-key.pem
+          chmod 600 techcrush-key.pem
 
       # 3️⃣ Make the script executable
       - name: 🧾 Grant execution permission
