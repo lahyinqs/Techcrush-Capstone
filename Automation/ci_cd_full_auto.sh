@@ -8,7 +8,7 @@ PROJECT_NAME="Techcrush"
 KEY_NAME="techcrush-key"
 PEM_FILE="techcrush-key.pem"
 REGION="us-east-1"
-AMI_ID="ami-0c7217cdde317cfec"   # Ubuntu 22.04 LTS
+AMI_ID="ami-0c398cb65a93047f2"   # Ubuntu 22.04 LTS
 INSTANCE_TYPE="t2.micro"
 TAG="TechcrushServer"
 # =================================
