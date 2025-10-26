@@ -22,16 +22,19 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
-      # Create PEM key file from secret
-      - name: Create PEM key file
+
+      # 3️⃣ Create PEM key file from GitHub secret (secure)
+      - name: 🔑 Create PEM key file
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           echo "$EC2_SSH_KEY" > techcrush-key.pem
           chmod 600 techcrush-key.pem
 
-      # 3️⃣ Make the script executable
+      # 4️⃣ Make the deployment script executable
       - name: 🧾 Grant execution permission
         run: chmod +x Automation/ci_cd_full_auto.sh
 
-      # 4️⃣ Run the deployment script
+      # 5️⃣ Run the deployment script
       - name: 🚀 Run CI/CD Deployment Script
         run: bash Automation/ci_cd_full_auto.sh
