@@ -8,7 +8,7 @@ echo "🚀 Starting Techcrush CI/CD Automation..."
 # ===========================
 AWS_REGION="us-east-1"
 KEY_NAME="techcrush-key"
-LOCAL_KEY_PATH="/mnt/c/Techcrush/techcrush-key.pem"
+LOCAL_KEY_PATH="/c/Techcrush/techcrush-key.pem"
 AMI_ID="ami-0c398cb65a93047f2"    # Ubuntu 22.04 AMI
 INSTANCE_TYPE="t2.micro"
 TAG_NAME="Techcrush-Auto-Instance"
