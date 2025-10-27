@@ -87,36 +87,31 @@ echo "✅ Security Group created: $SG_ID"
 # 5️⃣ LAUNCH EC2 INSTANCE
 # ============================================
 echo "🚀 Launching EC2 instance..."
+# Wait for instance to be in 'running' state
+echo "⏳ Waiting for instance to be in 'running' state..."
+aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 
-INSTANCE_ID=$(aws ec2 run-instances \
-    --image-id "$AMI_ID" \
-    --count 1 \
-    --instance-type "$INSTANCE_TYPE" \
-    --key-name "$KEY_NAME" \
-    --security-group-ids "$SG_ID" \
-    --subnet-id "$SUBNET_ID" \
-    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_NAME}]" \
-    --query "Instances[0].InstanceId" \
-    --region "$AWS_REGION" --output text)
-
-echo "✅ EC2 instance launched: $INSTANCE_ID"
-
-echo "⏳ Waiting for instance to be running..."
-aws ec2 wait instance-running --instance-ids "$INSTANCE_ID" --region "$AWS_REGION"
-
+# Wait for Public IP to be available
 echo "🔍 Fetching Public IP..."
-PUBLIC_IP=$(aws ec2 describe-instances \
+MAX_ATTEMPTS=15
+SLEEP_TIME=10
+for ((i=1; i<=MAX_ATTEMPTS; i++)); do
+  PUBLIC_IP=$(aws ec2 describe-instances \
     --instance-ids "$INSTANCE_ID" \
     --query "Reservations[0].Instances[0].PublicIpAddress" \
-    --region "$AWS_REGION" \
     --output text)
+  if [[ "$PUBLIC_IP" != "None" && "$PUBLIC_IP" != "null" ]]; then
+    echo "🌍 Public IP found: http://$PUBLIC_IP"
+    break
+  fi
+  echo "⏳ Waiting for Public IP (attempt $i/$MAX_ATTEMPTS)..."
+  sleep $SLEEP_TIME
+done
 
-if [ "$PUBLIC_IP" == "None" ] || [ -z "$PUBLIC_IP" ]; then
-    echo "❌ ERROR: Failed to retrieve Public IP."
-    exit 1
+if [[ "$PUBLIC_IP" == "None" || "$PUBLIC_IP" == "null" ]]; then
+  echo "❌ ERROR: Public IP not found after multiple attempts. Check AWS console."
+  exit 1
 fi
-
-echo "🌍 Public IP: http://$PUBLIC_IP"
 
 # ============================================
 # 6️⃣ DEPLOY WEBSITE FILES
