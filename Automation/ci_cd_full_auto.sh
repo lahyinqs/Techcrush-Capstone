@@ -9,7 +9,7 @@ echo "🚀 Starting Techcrush CI/CD Automation..."
 AWS_REGION="us-east-1"
 KEY_NAME="techcrush-key"
 LOCAL_KEY_PATH="/c/Techcrush/techcrush-key.pem"
-AMI_ID=$(aws ec2 describe-images \
+AMI_ID=ami-0c398cb65a93047f2
     --region "$AWS_REGION" \
     --owners amazon \
     --filters "Name=name,Values=amzn2-ami-hvm-2.0.*-x86_64-gp2" \
@@ -86,10 +86,31 @@ echo "✅ Security Group created: $SG_ID"
 # ============================================
 # 5️⃣ LAUNCH EC2 INSTANCE
 # ============================================
+# 🚀 Launch EC2 Instance
 echo "🚀 Launching EC2 instance..."
-# Wait for instance to be in 'running' state
+
+INSTANCE_ID=$(aws ec2 run-instances \
+  --image-id "$AMI_ID" \
+  --count 1 \
+  --instance-type "$INSTANCE_TYPE" \
+  --key-name "$KEY_NAME" \
+  --security-group-ids "$SECURITY_GROUP_ID" \
+  --subnet-id "$SUBNET_ID" \
+  --associate-public-ip-address \
+  --query "Instances[0].InstanceId" \
+  --output text)
+
+if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
+  echo "❌ ERROR: Failed to get EC2 instance ID. Check your AMI ID and parameters."
+  exit 1
+fi
+
+echo "✅ EC2 instance launched with ID: $INSTANCE_ID"
+
+# ⏳ Wait for instance to be running
 echo "⏳ Waiting for instance to be in 'running' state..."
 aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+echo "✅ Instance is running!"
 
 # Wait for Public IP to be available
 echo "🔍 Fetching Public IP..."
