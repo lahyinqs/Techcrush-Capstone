@@ -3,166 +3,119 @@ set -e
 
 echo "🚀 Starting Techcrush CI/CD Automation..."
 
-# ===========================
-# CONFIGURATION
-# ===========================
+# === CONFIGURATION ===
 AWS_REGION="us-east-1"
 KEY_NAME="techcrush-key"
-LOCAL_KEY_PATH="/c/Techcrush/techcrush-key.pem"
-AMI_ID="ami-0c398cb65a93047f2"    # Ubuntu 22.04 AMI
+LOCAL_KEY_PATH="/home/devopninja/techcrush-key.pem"
+AMI_ID="ami-0c398cb65a93047f2"
 INSTANCE_TYPE="t2.micro"
-TAG_NAME="Techcrush-Auto-Instance"
+PROJECT_NAME="Techcrush"
+TAG="Techcrush-Auto"
 
-# ===========================
-# VALIDATE PEM KEY
-# ===========================
+# === CHECK PEM KEY ===
 if [ ! -f "$LOCAL_KEY_PATH" ]; then
-  echo "❌ ERROR: Cannot find PEM key at $LOCAL_KEY_PATH"
-  echo "➡️ Please confirm the full path to techcrush-key.pem."
-  exit 1
+    echo "❌ ERROR: Cannot find PEM key at $LOCAL_KEY_PATH"
+    echo "➡️ Please confirm the full path to $KEY_NAME.pem."
+    exit 1
 else
-  echo "✅ Found PEM key at $LOCAL_KEY_PATH"
+    echo "✅ Found PEM key at $LOCAL_KEY_PATH"
 fi
 
-# ===============================
-# 🌐 NETWORK SETUP (VPC, SUBNET, IGW, ROUTE)
-# ===============================
+# === FIX PERMISSIONS (auto) ===
+echo "🔒 Checking and fixing PEM file permissions..."
+chmod 400 "$LOCAL_KEY_PATH"
+echo "✅ Permissions fixed for PEM file"
+
+# === CREATE NETWORKING COMPONENTS ===
 echo "🌐 Setting up VPC, Subnet, IGW, and Route Table..."
 
-VPC_ID=$(aws ec2 create-vpc \
-  --cidr-block 10.0.0.0/16 \
-  --query 'Vpc.VpcId' \
-  --output text \
-  --region "$AWS_REGION")
+VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 \
+    --query "Vpc.VpcId" --output text --region "$AWS_REGION")
 echo "✅ VPC created: $VPC_ID"
 
-SUBNET_ID=$(aws ec2 create-subnet \
-  --vpc-id "$VPC_ID" \
-  --cidr-block 10.0.1.0/24 \
-  --availability-zone "${AWS_REGION}a" \
-  --query 'Subnet.SubnetId' \
-  --output text)
+SUBNET_ID=$(aws ec2 create-subnet --vpc-id "$VPC_ID" \
+    --cidr-block 10.0.1.0/24 --availability-zone "${AWS_REGION}a" \
+    --query "Subnet.SubnetId" --output text)
 echo "✅ Subnet created: $SUBNET_ID"
 
 IGW_ID=$(aws ec2 create-internet-gateway \
-  --query 'InternetGateway.InternetGatewayId' \
-  --output text)
-  aws ec2 modify-subnet-attribute --subnet-id "$SUBNET_ID" --map-public-ip-on-launch
-
+    --query "InternetGateway.InternetGatewayId" --output text)
 aws ec2 attach-internet-gateway --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID"
 echo "✅ Internet Gateway created and attached: $IGW_ID"
 
-RTB_ID=$(aws ec2 create-route-table \
-  --vpc-id "$VPC_ID" \
-  --query 'RouteTable.RouteTableId' \
-  --output text)
-aws ec2 create-route --route-table-id "$RTB_ID" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID"
-aws ec2 associate-route-table --route-table-id "$RTB_ID" --subnet-id "$SUBNET_ID" > /dev/null
-echo "✅ Route table configured: $RTB_ID"
+ROUTE_TABLE_ID=$(aws ec2 create-route-table --vpc-id "$VPC_ID" \
+    --query "RouteTable.RouteTableId" --output text)
+aws ec2 create-route --route-table-id "$ROUTE_TABLE_ID" \
+    --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID" > /dev/null
+aws ec2 associate-route-table --subnet-id "$SUBNET_ID" --route-table-id "$ROUTE_TABLE_ID" > /dev/null
+echo "✅ Route table configured: $ROUTE_TABLE_ID"
 
-# ===============================
-# 🛡️ SECURITY GROUP
-# ===============================
+# === SECURITY GROUP ===
 echo "🛡️ Creating Security Group..."
-
-SECURITY_GROUP_NAME="techcrush-sg"
-
 SG_ID=$(aws ec2 create-security-group \
-    --group-name "$SECURITY_GROUP_NAME" \
-    --description "Techcrush CI/CD security group" \
+    --group-name "$TAG-sg" \
+    --description "Security group for $PROJECT_NAME project" \
     --vpc-id "$VPC_ID" \
-    --region "$AWS_REGION" \
-    --query "GroupId" \
-    --output text)
+    --query "GroupId" --output text)
 
+aws ec2 authorize-security-group-ingress \
+    --group-id "$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 > /dev/null
+aws ec2 authorize-security-group-ingress \
+    --group-id "$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 > /dev/null
 echo "✅ Security Group created: $SG_ID"
 
-# Allow SSH (22) and HTTP (80)
-aws ec2 authorize-security-group-ingress \
-    --group-id "$SG_ID" \
-    --protocol tcp \
-    --port 22 \
-    --cidr 0.0.0.0/0 \
-    --region "$AWS_REGION"
-
-aws ec2 authorize-security-group-ingress \
-    --group-id "$SG_ID" \
-    --protocol tcp \
-    --port 80 \
-    --cidr 0.0.0.0/0 \
-    --region "$AWS_REGION"
-
-# ===============================
-# 💻 EC2 INSTANCE LAUNCH
-# ===============================
+# === EC2 INSTANCE ===
 echo "🚀 Launching EC2 instance with Ubuntu 22.04 AMI ($AMI_ID)..."
 INSTANCE_ID=$(aws ec2 run-instances \
-  --image-id "$AMI_ID" \
-  --count 1 \
-  --instance-type "$INSTANCE_TYPE" \
-  --key-name "$KEY_NAME" \
-  --security-group-ids "$SG_ID" \
-  --subnet-id "$SUBNET_ID" \
-  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_PROJECT-Instance}]" \
-  --region "$AWS_REGION" \
-  --query 'Instances[0].InstanceId' \
-  --output text)
+    --image-id "$AMI_ID" \
+    --instance-type "$INSTANCE_TYPE" \
+    --key-name "$KEY_NAME" \
+    --security-group-ids "$SG_ID" \
+    --subnet-id "$SUBNET_ID" \
+    --associate-public-ip-address \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG}]" \
+    --query "Instances[0].InstanceId" --output text)
 
 echo "✅ EC2 instance launched: $INSTANCE_ID"
-
-# ===============================
-# 🕐 WAIT FOR INSTANCE
-# ===============================
 echo "⏳ Waiting for instance to reach 'running' state..."
-aws ec2 wait instance-running --instance-ids "$INSTANCE_ID" --region "$AWS_REGION"
+aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 echo "✅ Instance is running!"
 
-# ===============================
-# 🌍 FETCH PUBLIC IP
-# ===============================
+# === FETCH PUBLIC IP ===
 echo "🔍 Fetching Public IP..."
 PUBLIC_IP=$(aws ec2 describe-instances \
-  --instance-ids "$INSTANCE_ID" \
-  --region "$AWS_REGION" \
-  --query 'Reservations[0].Instances[0].PublicIpAddress' \
-  --output text)
+    --instance-ids "$INSTANCE_ID" \
+    --query "Reservations[0].Instances[0].PublicIpAddress" \
+    --output text)
 
-if [[ "$PUBLIC_IP" == "None" || -z "$PUBLIC_IP" ]]; then
-  echo "❌ ERROR: Failed to fetch Public IP. Check AWS Console."
-  exit 1
+if [ "$PUBLIC_IP" == "None" ] || [ -z "$PUBLIC_IP" ]; then
+    echo "❌ ERROR: Failed to fetch Public IP. Check AWS Console."
+    exit 1
 else
-  echo "🌍 Public IP: http://$PUBLIC_IP"
+    echo "🌍 Public IP: http://$PUBLIC_IP"
 fi
 
-# ===============================
-# ⚙️ SERVER SETUP
-# ===============================
+# === SSH SERVER CONFIGURATION ===
 echo "🧱 Configuring server via SSH..."
-sleep 30  # give SSH daemon time to initialize
+sleep 30  # wait for instance SSH service to be ready
 
 ssh -o StrictHostKeyChecking=no -i "$LOCAL_KEY_PATH" ubuntu@"$PUBLIC_IP" <<'EOF'
 sudo apt update -y
-sudo apt install apache2 -y
+sudo apt install -y apache2
 sudo systemctl enable apache2
 sudo systemctl start apache2
 EOF
-echo "✅ Apache Web Server installed successfully."
 
-# ===============================
-# 📦 DEPLOY WEBSITE FILES
-# ===============================
-echo "📦 Deploying website files..."
-scp -i "$LOCAL_KEY_PATH" -o StrictHostKeyChecking=no \
-  index.html Aboutus.html Contact-us.html ubuntu@"$PUBLIC_IP":/tmp/
+echo "✅ Apache web server installed successfully on instance."
 
-ssh -i "$LOCAL_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@"$PUBLIC_IP" <<'EOF'
-sudo mv /tmp/*.html /var/www/html/
-sudo systemctl restart apache2
-EOF
-echo "✅ Website deployed successfully."
+# === DEPLOY WEBSITE FILES ===
+if [ -f "./index.html" ]; then
+    echo "📦 Deploying website files to /var/www/html..."
+    scp -o StrictHostKeyChecking=no -i "$LOCAL_KEY_PATH" ./index.html ubuntu@"$PUBLIC_IP":/tmp/
+    ssh -i "$LOCAL_KEY_PATH" ubuntu@"$PUBLIC_IP" "sudo mv /tmp/index.html /var/www/html/index.html && sudo systemctl restart apache2"
+    echo "✅ Website deployed successfully!"
+else
+    echo "⚠️ index.html not found in project root — skipping deployment."
+fi
 
-# ===============================
-# ✅ FINAL STATUS
-# ===============================
-echo "🎉 Deployment completed successfully!"
-echo "🌐 Visit your website: http://$PUBLIC_IP"
+echo "🎉 Deployment complete! Visit your website at: http://$PUBLIC_IP"
