@@ -1,23 +1,21 @@
 #!/bin/bash
-set -e  # Exit immediately if a command exits with a non-zero status
+set -e
 
 echo "🚀 Starting Techcrush CI/CD Automation..."
 
-# ===============================
-# 🧩 CONFIGURATION
-# ===============================
+# ===========================
+# CONFIGURATION
+# ===========================
 AWS_REGION="us-east-1"
-AMI_ID="ami-0c398cb65a93047f2"   # Ubuntu 22.04 LTS (Stable in us-east-1)
-INSTANCE_TYPE="t2.micro"
 KEY_NAME="techcrush-key"
-LOCAL_KEY_PATH="/c/Techcrush/techcrush-key.pem"
-TAG_PROJECT="Techcrush"
-WEB_PORT=80
-SSH_PORT=22
+LOCAL_KEY_PATH="/mnt/c/Techcrush/techcrush-key.pem"
+AMI_ID="ami-0c398cb65a93047f2"    # Ubuntu 22.04 AMI
+INSTANCE_TYPE="t2.micro"
+TAG_NAME="Techcrush-Auto-Instance"
 
-# ===============================
-# 🔐 CHECK & VALIDATE PEM KEY
-# ===============================
+# ===========================
+# VALIDATE PEM KEY
+# ===========================
 if [ ! -f "$LOCAL_KEY_PATH" ]; then
   echo "❌ ERROR: Cannot find PEM key at $LOCAL_KEY_PATH"
   echo "➡️ Please confirm the full path to techcrush-key.pem."
@@ -49,6 +47,8 @@ echo "✅ Subnet created: $SUBNET_ID"
 IGW_ID=$(aws ec2 create-internet-gateway \
   --query 'InternetGateway.InternetGatewayId' \
   --output text)
+  aws ec2 modify-subnet-attribute --subnet-id "$SUBNET_ID" --map-public-ip-on-launch
+
 aws ec2 attach-internet-gateway --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID"
 echo "✅ Internet Gateway created and attached: $IGW_ID"
 
@@ -64,16 +64,33 @@ echo "✅ Route table configured: $RTB_ID"
 # 🛡️ SECURITY GROUP
 # ===============================
 echo "🛡️ Creating Security Group..."
-SG_ID=$(aws ec2 create-security-group \
-  --group-name "${TAG_PROJECT}-SG" \
-  --description "Allow SSH and HTTP" \
-  --vpc-id "$VPC_ID" \
-  --query 'GroupId' \
-  --output text)
 
-aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port "$SSH_PORT" --cidr 0.0.0.0/0
-aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port "$WEB_PORT" --cidr 0.0.0.0/0
+SECURITY_GROUP_NAME="techcrush-sg"
+
+SG_ID=$(aws ec2 create-security-group \
+    --group-name "$SECURITY_GROUP_NAME" \
+    --description "Techcrush CI/CD security group" \
+    --vpc-id "$VPC_ID" \
+    --region "$AWS_REGION" \
+    --query "GroupId" \
+    --output text)
+
 echo "✅ Security Group created: $SG_ID"
+
+# Allow SSH (22) and HTTP (80)
+aws ec2 authorize-security-group-ingress \
+    --group-id "$SG_ID" \
+    --protocol tcp \
+    --port 22 \
+    --cidr 0.0.0.0/0 \
+    --region "$AWS_REGION"
+
+aws ec2 authorize-security-group-ingress \
+    --group-id "$SG_ID" \
+    --protocol tcp \
+    --port 80 \
+    --cidr 0.0.0.0/0 \
+    --region "$AWS_REGION"
 
 # ===============================
 # 💻 EC2 INSTANCE LAUNCH
