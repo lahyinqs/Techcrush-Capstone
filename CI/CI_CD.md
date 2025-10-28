@@ -51,7 +51,7 @@ The web application becomes instantly live.
 
 # Step 4 — Website Verification
 
-After successful deployment, access your live site via the EC2 public IP:
+After successful deployment, I access my live site via the EC2 public IP:
 
 [http://<your-public-ip>](http://98.93.75.77/index.html)
 [http://<your-public-ip>](http://98.93.75.77/aboutus.html
