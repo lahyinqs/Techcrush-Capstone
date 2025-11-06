@@ -27,4 +27,6 @@ Secret key added
 
 🧩 **Maintainer:** [@lahyinqs](https://github.com/lahyinqs)
  
- Techcrush Cohort 3 Capstone Project updated 10
+ Techcrush Cohort 3 Capstone Project updated 
+ Updated 06/11/2025
+ 
