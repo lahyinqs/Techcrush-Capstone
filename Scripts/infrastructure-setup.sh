@@ -6,7 +6,7 @@
 # ---- CONFIGURATION ----
 PROJECT_NAME="Techcrush"
 REGION="us-east-1"
-CIDR_BLOCK="10.0.0.0/16"
+CIDR_BLOCK="10.0.0.0/16"+
 PUBLIC_SUBNET_CIDR="10.0.1.0/24"
 
 # ---- CREATE VPC ----
