@@ -2,46 +2,52 @@ name: 🚀 Techcrush CI/CD Deployment
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
     paths:
       - "*.html"
+      - "*.css"
+      - "*.js"
       - "Automation/**"
-  workflow_dispatch: # Allow manual trigger from GitHub UI
+  workflow_dispatch:  # allow manual trigger
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    env:
+      AWS_REGION: "us-east-1"
+      INSTANCE_TAG_NAME: "Techcrush-Web-Server"
+      BRANCH: "main"
+
     steps:
-      # 1️⃣ Checkout your repository
+      # 1️⃣ Checkout Code
       - name: 📦 Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS credentials securely
+      # 2️⃣ Configure AWS Credentials
       - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Create PEM key file from GitHub secret
+      # 3️⃣ Create PEM key file on runner
       - name: 🗝️ Create SSH Key file
         run: |
-          - name: 🗝️ Create SSH Key file
-  run: |
-    sudo mkdir -p /home/devopninja
-    echo "${{ secrets.EC2_SSH_KEY }}" | sudo tee /home/devopninja/techcrush-key.pem > /dev/null
-    sudo chmod 400 /home/devopninja/techcrush-key.pem
+          echo "${{ secrets.EC2_SSH_KEY }}" > techcrush-key.pem
+          chmod 400 techcrush-key.pem
 
-
-      # 4️⃣ Make deployment script executable
-      - name: 🧾 Make CI/CD script executable
+      # 4️⃣ Make CI/CD script executable
+      - name: 🧾 Make CI/CD Script executable
         run: chmod +x Automation/ci_cd_full_auto.sh
 
-      # 5️⃣ Run deployment automation
-      - name: 🚀 Run CI/CD Deployment Script
+      # 5️⃣ Run CI/CD Deployment
+      - name: 🚀 Deploy to EC2
         run: |
           echo "Running Techcrush CI/CD Pipeline..."
           bash Automation/ci_cd_full_auto.sh
+
+      # 6️⃣ Post deployment result
+      - name: ✅ Deployment Status
+        run: echo "🎉 Deployment Completed Successfully!"

@@ -1,103 +1,107 @@
 #!/bin/bash
+set -euo pipefail
+IFS=$'\n\t'
 
-echo "🚀 Starting Techcrush CI/CD Automation..."
+# === CONFIG ===
+KEY_PATH="techcrush-key.pem"
+EC2_USER="ubuntu"
+DEPLOY_DIR="/var/www/techcrush"
+REPO_URL=$(git config --get remote.origin.url || echo "")
+BRANCH="${BRANCH:-main}"
+AWS_REGION="${AWS_REGION:-us-east-1}"
+INSTANCE_TAG_NAME="${INSTANCE_TAG_NAME:-Techcrush}"
 
-# === CONFIGURATION ===
-KEY_PATH="/home/devopninja/techcrush-key.pem"
-KEY_NAME="techcrush-key"
-REGION="us-east-1"
-AMI_ID="ami-0c398cb65a93047f2"  # Ubuntu 22.04 LTS
-INSTANCE_TYPE="t2.micro"
-PROJECT_TAG="Techcrush"
-WEB_FILES_PATH="/mnt/c/Users/Harrylite/DevOpsNinja/Techcrush-Capstone"  # Local repo path containing HTML files
+echo "🚀 Starting CI/CD deploy script (git-pull -> EC2)..."
 
-# === CHECKS ===
+# === PRECHECKS ===
 if [ ! -f "$KEY_PATH" ]; then
-  echo "❌ ERROR: Cannot find PEM key at $KEY_PATH"
+  echo "❌ ERROR: PEM key file not found at $KEY_PATH"
+  exit 1
+fi
+chmod 400 "$KEY_PATH" || true
+
+if [ -z "$REPO_URL" ]; then
+  echo "❌ ERROR: Could not detect repository URL from git remote. Ensure this script runs inside your repo."
   exit 1
 fi
 
-if [ ! -d "$WEB_FILES_PATH" ]; then
-  echo "❌ ERROR: Local repo folder not found at $WEB_FILES_PATH"
+echo "Detected repo: $REPO_URL"
+echo "Target branch: $BRANCH"
+echo "AWS region: $AWS_REGION"
+echo "Looking for running EC2 with tag Name=$INSTANCE_TAG_NAME..."
+
+# === FIND EC2 PUBLIC IP (by tag Name=Techcrush and state=running) ===
+PUBLIC_IP=$(aws ec2 describe-instances \
+  --region "$AWS_REGION" \
+  --filters "Name=tag:Name,Values=${INSTANCE_TAG_NAME}" "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' --output text || true)
+
+if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
+  echo "❌ ERROR: No running EC2 instance found with tag Name=${INSTANCE_TAG_NAME} in region ${AWS_REGION}."
+  echo "Please start the instance or ensure the Name tag matches."
   exit 1
 fi
 
-echo "✅ Found PEM key and web files folder."
+echo "✅ Found EC2 public IP: $PUBLIC_IP"
 
-# === CREATE NETWORKING ===
-echo "🌐 Setting up VPC, Subnet, IGW, and Route Table..."
+# === PREPARE REMOTE COMMANDS ===
+# This here-doc will run on the EC2 instance and perform clone/pull, permissions, and service restart.
+read -r -d '' REMOTE_SCRIPT <<'EOF' || true
+set -euo pipefail
 
-VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query 'Vpc.VpcId' --output text --region $REGION)
-aws ec2 modify-vpc-attribute --vpc-id $VPC_ID --enable-dns-support "{\"Value\":true}" --region $REGION
-aws ec2 modify-vpc-attribute --vpc-id $VPC_ID --enable-dns-hostnames "{\"Value\":true}" --region $REGION
-echo "✅ VPC created: $VPC_ID"
+REPO_URL="$1"
+BRANCH="$2"
+DEPLOY_DIR="$3"
 
-SUBNET_ID=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/24 --query 'Subnet.SubnetId' --output text --region $REGION)
-echo "✅ Subnet created: $SUBNET_ID"
+echo "Remote: ensure git is installed..."
+if ! command -v git >/dev/null 2>&1; then
+  sudo apt-get update -y
+  sudo apt-get install -y git
+fi
 
-IGW_ID=$(aws ec2 create-internet-gateway --query 'InternetGateway.InternetGatewayId' --output text --region $REGION)
-aws ec2 attach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID --region $REGION
-echo "✅ Internet Gateway created and attached: $IGW_ID"
+echo "Remote: creating deploy directory if missing: $DEPLOY_DIR"
+if [ ! -d "$DEPLOY_DIR" ]; then
+  sudo mkdir -p "$DEPLOY_DIR"
+  sudo chown "$USER":"$USER" "$DEPLOY_DIR"
+fi
 
-RTB_ID=$(aws ec2 create-route-table --vpc-id $VPC_ID --query 'RouteTable.RouteTableId' --output text --region $REGION)
-aws ec2 create-route --route-table-id $RTB_ID --destination-cidr-block 0.0.0.0/0 --gateway-id $IGW_ID --region $REGION
-aws ec2 associate-route-table --subnet-id $SUBNET_ID --route-table-id $RTB_ID --region $REGION
-echo "✅ Route table configured: $RTB_ID"
+# Clone if missing, else pull
+if [ ! -d "$DEPLOY_DIR/.git" ]; then
+  echo "Remote: cloning repo into $DEPLOY_DIR (branch: $BRANCH)..."
+  git clone --branch "$BRANCH" --single-branch "$REPO_URL" "$DEPLOY_DIR"
+else
+  echo "Remote: updating existing repo (git fetch & reset) in $DEPLOY_DIR..."
+  cd "$DEPLOY_DIR"
+  git fetch origin "$BRANCH"
+  git reset --hard "origin/$BRANCH"
+fi
 
-# === SECURITY GROUP ===
-echo "🛡️ Creating Security Group..."
-SG_ID=$(aws ec2 create-security-group \
-  --group-name "techcrush-sg" \
-  --description "Allow HTTP and SSH" \
-  --vpc-id $VPC_ID \
-  --query 'GroupId' --output text --region $REGION)
+# Ensure correct permissions for web server (www-data)
+echo "Remote: setting ownership and permissions..."
+sudo chown -R www-data:www-data "$DEPLOY_DIR"
+sudo find "$DEPLOY_DIR" -type d -exec sudo chmod 755 {} \;
+sudo find "$DEPLOY_DIR" -type f -exec sudo chmod 644 {} \;
 
-aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --region $REGION
-aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0 --region $REGION
-echo "✅ Security Group created: $SG_ID"
+# Restart web service: prefer nginx, fallback to apache2
+if command -v nginx >/dev/null 2>&1; then
+  echo "Remote: restarting nginx..."
+  sudo systemctl restart nginx || sudo service nginx restart || true
+elif command -v apache2ctl >/dev/null 2>&1; then
+  echo "Remote: restarting apache2..."
+  sudo systemctl restart apache2 || sudo service apache2 restart || true
+else
+  echo "Remote: no nginx or apache2 found - you may need to install and configure your webserver."
+fi
 
-# === EC2 INSTANCE ===
-echo "🖥️ Launching EC2 instance..."
-INSTANCE_ID=$(aws ec2 run-instances \
-  --image-id $AMI_ID \
-  --instance-type $INSTANCE_TYPE \
-  --key-name $KEY_NAME \
-  --security-group-ids $SG_ID \
-  --subnet-id $SUBNET_ID \
-  --associate-public-ip-address \
-  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$PROJECT_TAG}]" \
-  --query 'Instances[0].InstanceId' --output text --region $REGION)
-
-echo "⏳ Waiting for instance to initialize..."
-aws ec2 wait instance-running --instance-ids $INSTANCE_ID --region $REGION
-
-PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID \
-  --query "Reservations[0].Instances[0].PublicIpAddress" --output text --region $REGION)
-
-echo "✅ EC2 running at: $PUBLIC_IP"
-
-# === INSTALL APACHE AND DEPLOY WEBSITE ===
-echo "🌍 Installing Apache and deploying site to EC2..."
-
-ssh -o StrictHostKeyChecking=no -i "$KEY_PATH" ubuntu@$PUBLIC_IP <<EOF
-  sudo apt update -y
-  sudo apt install apache2 -y
-  sudo systemctl enable apache2
-  sudo systemctl start apache2
-  sudo rm -rf /var/www/html/*
+echo "Remote: deployment finished."
 EOF
 
-# === COPY WEB FILES FROM LOCAL REPO ===
-scp -i "$KEY_PATH" $WEB_FILES_PATH/*.html ubuntu@$PUBLIC_IP:/var/www/html/
+# === RUN REMOTE SCRIPT OVER SSH ===
+echo "SSH -> ubuntu@${PUBLIC_IP} (running remote deploy script)..."
 
-# === FINAL PERMISSIONS ===
-ssh -i "$KEY_PATH" ubuntu@$PUBLIC_IP <<EOF
-  sudo chown -R www-data:www-data /var/www/html
-  sudo chmod -R 755 /var/www/html
-EOF
+# Use ssh with StrictHostKeyChecking=no to avoid interactive prompt on new host
+ssh -o StrictHostKeyChecking=no -i "$KEY_PATH" "$EC2_USER"@"$PUBLIC_IP" /bin/bash -s -- "$REPO_URL" "$BRANCH" "$DEPLOY_DIR" <<'SSH_EOF'
+'"$REMOTE_SCRIPT"'
+SSH_EOF
 
-echo "✅ Website deployed successfully!"
-
-# === OUTPUT DEPLOYMENT DETAILS ===
-echo "🌐 Visit your site at: http://$PUBLIC_IP"
-echo "🎉 Deployment complete for project: $PROJECT_TAG"
+echo "✅ Deployment completed. Visit your site or check /var/www/techcrush on EC2."
