@@ -29,9 +29,12 @@ jobs:
       # 3️⃣ Create PEM key file from GitHub secret
       - name: 🗝️ Create SSH Key file
         run: |
-          mkdir -p /home/runner/work/Techcrush/Techcrush
-          echo "${{ secrets.EC2_SSH_KEY }}" > /home/runner/work/Techcrush/Techcrush/techcrush-key.pem
-          chmod 400 /home/runner/work/Techcrush/Techcrush/techcrush-key.pem
+          - name: 🗝️ Create SSH Key file
+  run: |
+    sudo mkdir -p /home/devopninja
+    echo "${{ secrets.EC2_SSH_KEY }}" | sudo tee /home/devopninja/techcrush-key.pem > /dev/null
+    sudo chmod 400 /home/devopninja/techcrush-key.pem
+
 
       # 4️⃣ Make deployment script executable
       - name: 🧾 Make CI/CD script executable
