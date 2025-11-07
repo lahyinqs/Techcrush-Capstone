@@ -1,61 +1,37 @@
-name: Continuous Deployment to EC2
-
-# Trigger this workflow on pushes to the 'main' branch
-on:
-  push:
-    branches:
-      - main
-    # Only run the deployment if specific website files are modified
-    paths:
-      - '**.html'
-      - '**.php'
-      - '**.css'
-      - '**.js'
-      - 'index.html' # Explicitly list key files if needed
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    
-    # Environment variables for the job
-    env:
-      EC2_USER: ubuntu
-      DEPLOY_DIR: /var/www/techcrush
-      
-    # Security note: These secrets must be configured in your GitHub repository settings.
-    # We use secrets for sensitive data like IP and the private key.
-    # EC2_PUBLIC_IP: Store the IP (e.g., 18.234.56.78)
-    # SSH_PRIVATE_KEY: Store the contents of the .pem file.
-    
-    steps:
-      - name: ⬇️ Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: ⚙️ Deploy to EC2 via SCP and SSH
-        uses: appleboy/ssh-action@v1.0.1
-        with:
-          # SSH connection details from GitHub Secrets
-          host: ${{ secrets.AWS_HOST }}
-          username: ${{ env.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          
-          # SCP command to copy ALL files in the repository to the EC2 target directory
-          script_stop: true # Stop if any command fails
+script_stop: true
           script: |
             echo "Starting remote deployment on EC2..."
             
-            # 1. Create and set permissions for the target directory
-            sudo mkdir -p ${{ env.DEPLOY_DIR }}
-            sudo chown -R ${{ env.EC2_USER }}:${{ env.EC2_USER }} ${{ env.DEPLOY_DIR }}
+            # Use environment variables set in the YAML
+            DEPLOY_DIR="/var/www/techcrush"
             
-            # 2. Upload/Sync the files from the GitHub Runner to EC2
-            # The 'source' directory is the GitHub workspace ('.')
-            rsync -avz --exclude '.git/' --exclude '.github/' ./ ${{ env.EC2_USER }}@${{ secrets.EC2_PUBLIC_IP }}:${{ env.DEPLOY_DIR }}/
+            # 1. Create and set initial ownership for the target directory
+            sudo mkdir -p ${DEPLOY_DIR}
+            sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
+
+            # 2. Remote Clone or Pull (The Fix for the rsync error)
+            echo "Attempting to update code via git pull..."
+            
+            # NOTE: This assumes your repository is publicly accessible (HTTPS). 
+            # If private, you need SSH or a token set up on the EC2.
+            REPO_URL="https://github.com/${{ github.repository }}" 
+            
+            if [ ! -d "${DEPLOY_DIR}/.git" ]; then
+              # Clone if directory is missing
+              git clone ${REPO_URL} ${DEPLOY_DIR}
+            else
+              # Pull if directory exists
+              cd ${DEPLOY_DIR}
+              git fetch --all
+              git reset --hard origin/main # Assumes deployment is always from 'main'
+            fi
             
             # 3. Reset web server permissions
             echo "Setting ownership (www-data) and permissions..."
-            sudo chown -R www-data:www-data ${{ env.DEPLOY_DIR }}
-            
+            sudo chown -R www-data:www-data ${DEPLOY_DIR}
+            sudo find ${DEPLOY_DIR} -type d -exec sudo chmod 755 {} \;
+            sudo find ${DEPLOY_DIR} -type f -exec sudo chmod 644 {} \;
+
             # 4. Restart web service
             if command -v nginx >/dev/null 2>&1; then
               echo "Restarting nginx..."
