@@ -35,38 +35,42 @@ jobs:
         uses: appleboy/ssh-action@v1.0.1
         with:
           # Host/User/Key inputs (Using your confirmed secret names)
-          host: ${{ secrets.AWS_HOST }}             # EC2 Public IP/DNS
-          username: ${{ env.EC2_USER }}            # 'ubuntu'
-          key: ${{ secrets.SSH_PRIVATE_KEY }}      # Contents of the .pem file
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ env.EC2_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           
           # Execution settings
           script_stop: true # Crucial: stops immediately on any error
           
           # The remote shell script to execute on the EC2 instance
           script: |
-            echo "🚀 Starting remote deployment on EC2..."
+            echo "🚀 Starting robust remote deployment..."
             
             DEPLOY_DIR="/var/www/techcrush"
-            # Get the HTTPS repo URL from the GitHub context
             REPO_URL="https://github.com/${{ github.repository }}" 
             
-            # --- 1. Setup Directory and Permissions ---
+            # --- 1. Setup Directory and Permissions (Ensure ownership is correct) ---
             sudo mkdir -p ${DEPLOY_DIR}
-            # Give the ssh user (ubuntu) temporary ownership to clone/pull
             sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
-
+            
             # --- 2. Remote Clone or Pull ---
             echo "Attempting to update code via git pull..."
-            
+
             if [ ! -d "${DEPLOY_DIR}/.git" ]; then
-              # Clone if directory is missing
-              git clone ${REPO_URL} ${DEPLOY_DIR}
+              # Clone if directory is missing (First run)
+              git clone ${REPO_URL} ${DEPLOY_DIR} 2>&1 || { echo "FATAL ERROR: Git Clone failed." >&2; exit 1; }
             else
-              # Pull if directory exists
+              # FIX FOR SUBSEQUENT RUNS (This is where the error occurred before)
               cd ${DEPLOY_DIR}
-              git fetch --all
-              # Hard reset ensures we get the exact commit pushed
-              git reset --hard origin/main 
+              
+              # Ensure the repository is clean (stash any files that block the pull/reset)
+              git stash push --include-untracked -m "CI/CD auto-stash" || true
+              
+              # Fetch all changes and confirm success
+              git fetch --all 2>&1 || { echo "FATAL ERROR: Git Fetch failed." >&2; exit 1; }
+              
+              # Hard reset to the latest main commit
+              git reset --hard origin/main 2>&1 || { echo "FATAL ERROR: Git Reset failed." >&2; exit 1; }
             fi
             
             # --- 3. Set Web Server Permissions ---
@@ -76,7 +80,6 @@ jobs:
             sudo find ${DEPLOY_DIR} -type f -exec sudo chmod 644 {} \;
 
             # --- 4. Restart Web Service ---
-            # Prioritize Nginx, then Apache2
             if command -v nginx >/dev/null 2>&1; then
               echo "Restarting nginx..."
               sudo systemctl restart nginx || true
