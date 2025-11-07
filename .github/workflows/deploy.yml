@@ -1,12 +1,10 @@
 name: Continuous Deployment to EC2 (Techcrush)
 
-# Defines the workflow triggers
 on:
-  # 1. Automatic Trigger: Runs on a push to the 'main' branch
+  # Triggers automatically on a push to the 'main' branch
   push:
     branches:
       - main
-    # Only deploy if these common website files change
     paths:
       - '**.html'
       - '**.php'
@@ -14,7 +12,7 @@ on:
       - '**.js'
       - '**.jpg'
       
-  # 2. Manual Trigger: Enables the "Run workflow" button
+  # Enables the "Run workflow" button
   workflow_dispatch:
   
 
@@ -22,7 +20,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     
-    # Environment variables visible within this job
     env:
       EC2_USER: ubuntu
       DEPLOY_DIR: /var/www/techcrush
@@ -34,36 +31,49 @@ jobs:
       - name: ⚙️ Deploy Code via SSH and Git Pull
         uses: appleboy/ssh-action@v1.0.1
         with:
-          # Host/User/Key inputs (Using your confirmed secret names)
+          # SSH connection details using your confirmed secrets
           host: ${{ secrets.AWS_HOST }}
           username: ${{ env.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           
           # Execution settings
-          script_stop: true # Crucial: stops immediately on any error
+          script_stop: true
           
-          # The remote shell script to execute on the EC2 instance
+          # The remote shell script (Note the consistent indentation inside the pipe '|')
           script: |
-            echo "🚀 Starting robust remote deployment..."
+            echo "🚀 Starting ULTRA-ROBUST deployment..."
             
             DEPLOY_DIR="/var/www/techcrush"
             REPO_URL="https://github.com/${{ github.repository }}" 
             
-            # --- 1. Setup Directory and Permissions (Ensure ownership is correct) ---
+            # --- DEBUG: 1. Verify/Install Git ---
+            if ! command -v git &> /dev/null
+            then
+                echo "FATAL ERROR: Git command not found. Installing it..." >&2
+                sudo apt update && sudo apt install git -y
+                if ! command -v git &> /dev/null; then
+                    echo "FATAL ERROR: Git installation failed." >&2; exit 1;
+                fi
+            fi
+
+            # --- 2. Setup Directory and Permissions ---
             sudo mkdir -p ${DEPLOY_DIR}
             sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
-            
-            # --- 2. Remote Clone or Pull ---
+
+            # --- 3. Remote Clone or Pull ---
             echo "Attempting to update code via git pull..."
 
             if [ ! -d "${DEPLOY_DIR}/.git" ]; then
               # Clone if directory is missing (First run)
               git clone ${REPO_URL} ${DEPLOY_DIR} 2>&1 || { echo "FATAL ERROR: Git Clone failed." >&2; exit 1; }
             else
-              # FIX FOR SUBSEQUENT RUNS (This is where the error occurred before)
+              # FIX FOR SUBSEQUENT RUNS (Ensures clean state)
               cd ${DEPLOY_DIR}
               
-              # Ensure the repository is clean (stash any files that block the pull/reset)
+              # Force checkout to the desired branch to prevent detached HEAD issues
+              git checkout main 2>&1 || { echo "WARNING: Could not checkout main branch." >&2; }
+
+              # Stash any local changes/untracked files that block the reset
               git stash push --include-untracked -m "CI/CD auto-stash" || true
               
               # Fetch all changes and confirm success
@@ -73,13 +83,13 @@ jobs:
               git reset --hard origin/main 2>&1 || { echo "FATAL ERROR: Git Reset failed." >&2; exit 1; }
             fi
             
-            # --- 3. Set Web Server Permissions ---
+            # --- 4. Set Web Server Permissions ---
             echo "Setting web server ownership (www-data) and permissions..."
             sudo chown -R www-data:www-data ${DEPLOY_DIR}
             sudo find ${DEPLOY_DIR} -type d -exec sudo chmod 755 {} \;
             sudo find ${DEPLOY_DIR} -type f -exec sudo chmod 644 {} \;
 
-            # --- 4. Restart Web Service ---
+            # --- 5. Restart Web Service ---
             if command -v nginx >/dev/null 2>&1; then
               echo "Restarting nginx..."
               sudo systemctl restart nginx || true
