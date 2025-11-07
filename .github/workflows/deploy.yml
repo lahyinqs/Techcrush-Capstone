@@ -35,7 +35,7 @@ jobs:
         uses: appleboy/ssh-action@v1.0.1
         with:
           # SSH connection details from GitHub Secrets
-          host: ${{ secrets.EC2_PUBLIC_IP }}
+          host: ${{ secrets.AWS_HOST }}
           username: ${{ env.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           
