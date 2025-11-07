@@ -15,64 +15,83 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      EC2_USER: ubuntu
-      DEPLOY_DIR: /var/www/html
 
     steps:
-      - name: Checkout Repository Code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy to EC2 (FIXED - WILL NEVER FAIL AGAIN)
+      - name: DEPLOY TO EC2 → /var/www/techcrush (NGINX FINAL BOSS)
         uses: appleboy/ssh-action@v1.0.1
         with:
           host: ${{ secrets.AWS_HOST }}
-          username: ${{ env.EC2_USER }}
+          username: ubuntu
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          script_stop: false   # ← THIS WAS KILLING YOU
-          debug: true          # ← SEE EVERYTHING
+          debug: true
           script: |
-            set -e  # Die on any error BUT show us where
-            
-            echo "STARTING DEPLOYMENT - $(date)"
-            
-            # --- 1. Install git using Ubuntu's package manager ---
-            echo "Installing git if missing..."
+            set -e
+
+            echo "TECHCRUSH NGINX DEPLOYMENT - $(date)"
+
+            # 1. Install git
             if ! command -v git > /dev/null 2>&1; then
-              echo "git not found → installing..."
-              apt update -qq
-              DEBIAN_FRONTEND=noninteractive apt install -y git
+              sudo apt update -qq
+              sudo DEBIAN_FRONTEND=noninteractive apt install -y git
             fi
-            
-            # --- 2. Deploy directory ---
-            DEPLOY_DIR="/var/www/html"
+
+            # 2. Paths
+            DEPLOY_DIR="/var/www/techcrush"
             REPO_URL="https://github.com/${{ github.repository }}.git"
-            
-            mkdir -p $DEPLOY_DIR
-            chown ubuntu:ubuntu $DEPLOY_DIR
-            
-            # --- 3. Clone or hard reset ---
-            if [ ! -d "$DEPLOY_DIR/.git" ]; then
-              echo "First deploy → cloning repo..."
-              rm -rf $DEPLOY_DIR
-              git clone $REPO_URL $DEPLOY_DIR
-            else
-              echo "Updating existing repo..."
-              cd $DEPLOY_DIR
-              git fetch --all
-              git reset --hard origin/main
-              git clean -fd
-            fi
-            
-            # --- 4. Permissions ---
-            chown -R www-data:www-data $DEPLOY_DIR
-            find $DEPLOY_DIR -type d -exec chmod 755 {} \;
-            find $DEPLOY_DIR -type f -exec chmod 644 {} \;
-            
-            # --- 5. Restart web server ---
-            echo "Restarting web server..."
-            systemctl restart nginx || systemctl restart apache2 || echo "No web server restarted"
-            
-            echo "DEPLOYMENT SUCCESSFUL - $(curl -s ifconfig.me || echo 'IP hidden') - $(date)"
-            echo "Your site is LIVE at http://$(curl -s ifconfig.me || echo 'your-ip')"
+
+            # 3. NUCLEAR CLEAN + CLONE
+            echo "Nuking old site..."
+            sudo rm -rf $DEPLOY_DIR
+            sudo mkdir -p $DEPLOY_DIR
+
+            echo "Cloning fresh code..."
+            sudo git clone $REPO_URL $DEPLOY_DIR
+
+            # 4. Permissions
+            sudo chown -R www-data:www-data $DEPLOY_DIR
+            sudo find $DEPLOY_DIR -type d -exec chmod 755 {} \;
+            sudo find $DEPLOY_DIR -type f -exec chmod 644 {} \;
+
+            # 5. NGINX CONFIG (auto-create if missing)
+            sudo tee /etc/nginx/sites-available/techcrush > /dev/null <<EOF
+            server {
+                listen 80;
+                server_name _;
+
+                root /var/www/techcrush;
+                index index.php index.html index.htm;
+
+                location / {
+                    try_files \$uri \$uri/ =404;
+                }
+
+                location ~ \.php$ {
+                    include snippets/fastcgi-php.conf;
+                    fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+                    # or php7.4-fpm.sock / php8.2-fpm.sock — change if needed
+                }
+
+                location ~ /\.ht {
+                    deny all;
+                }
+            }
+            EOF
+
+            # Enable site
+            sudo ln -sf /etc/nginx/sites-available/techcrush /etc/nginx/sites-enabled/
+            sudo rm -f /etc/nginx/sites-enabled/default  # optional: remove default
+
+            # Test + reload
+            echo "Testing NGINX config..."
+            sudo nginx -t && sudo systemctl reload nginx
+
+            # Victory
+            IP=$(curl -s ifconfig.me)
+            echo ""
+            echo "TECHCRUSH IS LIVE ON NGINX!"
+            echo "http://$IP"
+            echo "Deployed: $(date)"
+            echo "Your capstone just went pro-level."
