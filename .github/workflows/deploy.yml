@@ -16,7 +16,7 @@ jobs:
 
     env:
       AWS_REGION: "us-east-1"
-      INSTANCE_TAG_NAME: "Techcrush-Web-Server"
+      INSTANCE_TAG_NAME: "Techcrush"
       BRANCH: "main"
 
     steps:

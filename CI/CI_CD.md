@@ -58,3 +58,4 @@ After successful deployment, I access my live site via the EC2 public IP:
 [http://<your-public-ip>](http://98.93.75.77/contact.html
 
 ![alt text](<../Automation deploy index.PNG>)
+Updated
