@@ -1,47 +1,90 @@
-script_stop: true
-        # --- THIS LINE MUST BE CORRECTED ---
-        script: |
-          echo "Starting remote deployment on EC2..."
-          
-          # Use environment variables set in the YAML
-          DEPLOY_DIR="/var/www/techcrush"
-          
-          # 1. Create and set initial ownership for the target directory
-          sudo mkdir -p ${DEPLOY_DIR}
-          sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
+name: Continuous Deployment to EC2 (Techcrush)
 
-          # 2. Remote Clone or Pull (The Fix for the rsync error)
-          echo "Attempting to update code via git pull..."
-          
-          # NOTE: This assumes your repository is publicly accessible (HTTPS). 
-          # If private, you need SSH or a token set up on the EC2.
-          REPO_URL="https://github.com/${{ github.repository }}" 
-          
-          if [ ! -d "${DEPLOY_DIR}/.git" ]; then
-            # Clone if directory is missing
-            git clone ${REPO_URL} ${DEPLOY_DIR}
-          else
-            # Pull if directory exists
-            cd ${DEPLOY_DIR}
-            git fetch --all
-            git reset --hard origin/main # Assumes deployment is always from 'main'
-          fi
-          
-          # 3. Reset web server permissions
-          echo "Setting ownership (www-data) and permissions..."
-          sudo chown -R www-data:www-data ${DEPLOY_DIR}
-          sudo find ${DEPLOY_DIR} -type d -exec sudo chmod 755 {} \;
-          sudo find ${DEPLOY_DIR} -type f -exec sudo chmod 644 {} \;
+# Defines the workflow triggers
+on:
+  # 1. Automatic Trigger: Runs on a push to the 'main' branch
+  push:
+    branches:
+      - main
+    # Only deploy if these common website files change
+    paths:
+      - '**.html'
+      - '**.php'
+      - '**.css'
+      - '**.js'
+      - '**.jpg'
+      
+  # 2. Manual Trigger: Enables the "Run workflow" button
+  workflow_dispatch:
+  
 
-          # 4. Restart web service
-          if command -v nginx >/dev/null 2>&1; then
-            echo "Restarting nginx..."
-            sudo systemctl restart nginx || true
-          elif command -v apache2ctl >/dev/null 2>&1; then
-            echo "Restarting apache2..."
-            sudo systemctl restart apache2 || true
-          else
-            echo "Warning: No web server found to restart."
-          fi
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    # Environment variables visible within this job
+    env:
+      EC2_USER: ubuntu
+      DEPLOY_DIR: /var/www/techcrush
+      
+    steps:
+      - name: ⬇️ Checkout Repository Code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Deploy Code via SSH and Git Pull
+        uses: appleboy/ssh-action@v1.0.1
+        with:
+          # Host/User/Key inputs (Using your confirmed secret names)
+          host: ${{ secrets.AWS_HOST }}             # EC2 Public IP/DNS
+          username: ${{ env.EC2_USER }}            # 'ubuntu'
+          key: ${{ secrets.SSH_PRIVATE_KEY }}      # Contents of the .pem file
           
-          echo "Deployment finished."
+          # Execution settings
+          script_stop: true # Crucial: stops immediately on any error
+          
+          # The remote shell script to execute on the EC2 instance
+          script: |
+            echo "🚀 Starting remote deployment on EC2..."
+            
+            DEPLOY_DIR="/var/www/techcrush"
+            # Get the HTTPS repo URL from the GitHub context
+            REPO_URL="https://github.com/${{ github.repository }}" 
+            
+            # --- 1. Setup Directory and Permissions ---
+            sudo mkdir -p ${DEPLOY_DIR}
+            # Give the ssh user (ubuntu) temporary ownership to clone/pull
+            sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
+
+            # --- 2. Remote Clone or Pull ---
+            echo "Attempting to update code via git pull..."
+            
+            if [ ! -d "${DEPLOY_DIR}/.git" ]; then
+              # Clone if directory is missing
+              git clone ${REPO_URL} ${DEPLOY_DIR}
+            else
+              # Pull if directory exists
+              cd ${DEPLOY_DIR}
+              git fetch --all
+              # Hard reset ensures we get the exact commit pushed
+              git reset --hard origin/main 
+            fi
+            
+            # --- 3. Set Web Server Permissions ---
+            echo "Setting web server ownership (www-data) and permissions..."
+            sudo chown -R www-data:www-data ${DEPLOY_DIR}
+            sudo find ${DEPLOY_DIR} -type d -exec sudo chmod 755 {} \;
+            sudo find ${DEPLOY_DIR} -type f -exec sudo chmod 644 {} \;
+
+            # --- 4. Restart Web Service ---
+            # Prioritize Nginx, then Apache2
+            if command -v nginx >/dev/null 2>&1; then
+              echo "Restarting nginx..."
+              sudo systemctl restart nginx || true
+            elif command -v apache2ctl >/dev/null 2>&1; then
+              echo "Restarting apache2..."
+              sudo systemctl restart apache2 || true
+            else
+              echo "Warning: No web server found to restart."
+            fi
+            
+            echo "✅ Deployment finished."
