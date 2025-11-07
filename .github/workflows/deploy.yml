@@ -1,46 +1,47 @@
 script_stop: true
-          script: |
-            echo "Starting remote deployment on EC2..."
-            
-            # Use environment variables set in the YAML
-            DEPLOY_DIR="/var/www/techcrush"
-            
-            # 1. Create and set initial ownership for the target directory
-            sudo mkdir -p ${DEPLOY_DIR}
-            sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
+        # --- THIS LINE MUST BE CORRECTED ---
+        script: |
+          echo "Starting remote deployment on EC2..."
+          
+          # Use environment variables set in the YAML
+          DEPLOY_DIR="/var/www/techcrush"
+          
+          # 1. Create and set initial ownership for the target directory
+          sudo mkdir -p ${DEPLOY_DIR}
+          sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
 
-            # 2. Remote Clone or Pull (The Fix for the rsync error)
-            echo "Attempting to update code via git pull..."
-            
-            # NOTE: This assumes your repository is publicly accessible (HTTPS). 
-            # If private, you need SSH or a token set up on the EC2.
-            REPO_URL="https://github.com/${{ github.repository }}" 
-            
-            if [ ! -d "${DEPLOY_DIR}/.git" ]; then
-              # Clone if directory is missing
-              git clone ${REPO_URL} ${DEPLOY_DIR}
-            else
-              # Pull if directory exists
-              cd ${DEPLOY_DIR}
-              git fetch --all
-              git reset --hard origin/main # Assumes deployment is always from 'main'
-            fi
-            
-            # 3. Reset web server permissions
-            echo "Setting ownership (www-data) and permissions..."
-            sudo chown -R www-data:www-data ${DEPLOY_DIR}
-            sudo find ${DEPLOY_DIR} -type d -exec sudo chmod 755 {} \;
-            sudo find ${DEPLOY_DIR} -type f -exec sudo chmod 644 {} \;
+          # 2. Remote Clone or Pull (The Fix for the rsync error)
+          echo "Attempting to update code via git pull..."
+          
+          # NOTE: This assumes your repository is publicly accessible (HTTPS). 
+          # If private, you need SSH or a token set up on the EC2.
+          REPO_URL="https://github.com/${{ github.repository }}" 
+          
+          if [ ! -d "${DEPLOY_DIR}/.git" ]; then
+            # Clone if directory is missing
+            git clone ${REPO_URL} ${DEPLOY_DIR}
+          else
+            # Pull if directory exists
+            cd ${DEPLOY_DIR}
+            git fetch --all
+            git reset --hard origin/main # Assumes deployment is always from 'main'
+          fi
+          
+          # 3. Reset web server permissions
+          echo "Setting ownership (www-data) and permissions..."
+          sudo chown -R www-data:www-data ${DEPLOY_DIR}
+          sudo find ${DEPLOY_DIR} -type d -exec sudo chmod 755 {} \;
+          sudo find ${DEPLOY_DIR} -type f -exec sudo chmod 644 {} \;
 
-            # 4. Restart web service
-            if command -v nginx >/dev/null 2>&1; then
-              echo "Restarting nginx..."
-              sudo systemctl restart nginx || true
-            elif command -v apache2ctl >/dev/null 2>&1; then
-              echo "Restarting apache2..."
-              sudo systemctl restart apache2 || true
-            else
-              echo "Warning: No web server found to restart."
-            fi
-            
-            echo "Deployment finished."
+          # 4. Restart web service
+          if command -v nginx >/dev/null 2>&1; then
+            echo "Restarting nginx..."
+            sudo systemctl restart nginx || true
+          elif command -v apache2ctl >/dev/null 2>&1; then
+            echo "Restarting apache2..."
+            sudo systemctl restart apache2 || true
+          else
+            echo "Warning: No web server found to restart."
+          fi
+          
+          echo "Deployment finished."
