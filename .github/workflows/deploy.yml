@@ -1,53 +1,70 @@
-name: 🚀 Techcrush CI/CD Deployment
+name: Continuous Deployment to EC2
 
+# Trigger this workflow on pushes to the 'main' branch
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+    # Only run the deployment if specific website files are modified
     paths:
-      - "*.html"
-      - "*.css"
-      - "*.js"
-      - "Automation/**"
-  workflow_dispatch:  # allow manual trigger
+      - '**.html'
+      - '**.php'
+      - '**.css'
+      - '**.js'
+      - 'index.html' # Explicitly list key files if needed
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
+    
+    # Environment variables for the job
     env:
-      AWS_REGION: "us-east-1"
-      INSTANCE_TAG_NAME: "Techcrush"
-      BRANCH: "main"
-
+      EC2_USER: ubuntu
+      DEPLOY_DIR: /var/www/techcrush
+      
+    # Security note: These secrets must be configured in your GitHub repository settings.
+    # We use secrets for sensitive data like IP and the private key.
+    # EC2_PUBLIC_IP: Store the IP (e.g., 18.234.56.78)
+    # SSH_PRIVATE_KEY: Store the contents of the .pem file.
+    
     steps:
-      # 1️⃣ Checkout Code
-      - name: 📦 Checkout repository
+      - name: ⬇️ Checkout Repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS Credentials
-      - name: 🔐 Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: ⚙️ Deploy to EC2 via SCP and SSH
+        uses: appleboy/ssh-action@v1.0.1
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # 3️⃣ Create PEM key file on runner
-      - name: 🗝️ Create SSH Key file
-        run: |
-          echo "${{ secrets.EC2_SSH_KEY }}" > techcrush-key.pem
-          chmod 400 techcrush-key.pem
-
-      # 4️⃣ Make CI/CD script executable
-      - name: 🧾 Make CI/CD Script executable
-        run: chmod +x Automation/ci_cd_full_auto.sh
-
-      # 5️⃣ Run CI/CD Deployment
-      - name: 🚀 Deploy to EC2
-        run: |
-          echo "Running Techcrush CI/CD Pipeline..."
-          bash Automation/ci_cd_full_auto.sh
-
-      # 6️⃣ Post deployment result
-      - name: ✅ Deployment Status
-        run: echo "🎉 Deployment Completed Successfully!"
+          # SSH connection details from GitHub Secrets
+          host: ${{ secrets.EC2_PUBLIC_IP }}
+          username: ${{ env.EC2_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          
+          # SCP command to copy ALL files in the repository to the EC2 target directory
+          script_stop: true # Stop if any command fails
+          script: |
+            echo "Starting remote deployment on EC2..."
+            
+            # 1. Create and set permissions for the target directory
+            sudo mkdir -p ${{ env.DEPLOY_DIR }}
+            sudo chown -R ${{ env.EC2_USER }}:${{ env.EC2_USER }} ${{ env.DEPLOY_DIR }}
+            
+            # 2. Upload/Sync the files from the GitHub Runner to EC2
+            # The 'source' directory is the GitHub workspace ('.')
+            rsync -avz --exclude '.git/' --exclude '.github/' ./ ${{ env.EC2_USER }}@${{ secrets.EC2_PUBLIC_IP }}:${{ env.DEPLOY_DIR }}/
+            
+            # 3. Reset web server permissions
+            echo "Setting ownership (www-data) and permissions..."
+            sudo chown -R www-data:www-data ${{ env.DEPLOY_DIR }}
+            
+            # 4. Restart web service
+            if command -v nginx >/dev/null 2>&1; then
+              echo "Restarting nginx..."
+              sudo systemctl restart nginx || true
+            elif command -v apache2ctl >/dev/null 2>&1; then
+              echo "Restarting apache2..."
+              sudo systemctl restart apache2 || true
+            else
+              echo "Warning: No web server found to restart."
+            fi
+            
+            echo "Deployment finished."
