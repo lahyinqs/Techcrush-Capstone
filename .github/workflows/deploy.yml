@@ -89,9 +89,14 @@ jobs:
             sudo nginx -t && sudo systemctl reload nginx
 
             # Victory
-            IP=$(curl -s ifconfig.me)
+            echo "Fetching your public IP (3 fallback methods)..."
+            IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || \
+                 curl -s http://ifconfig.me || \
+                 curl -s icanhazip.com || \
+                 echo "IP-hidden-by-github")
             echo ""
-            echo "TECHCRUSH IS LIVE ON NGINX!"
+            echo "TECHCRUSH IS OFFICIALLY LIVE!"
             echo "http://$IP"
+            echo "Direct link: http://$IP"
             echo "Deployed: $(date)"
-            echo "Your capstone just went pro-level."
+            echo "You absolute legend."
