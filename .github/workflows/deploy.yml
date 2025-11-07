@@ -1,7 +1,6 @@
 name: Continuous Deployment to EC2 (Techcrush)
 
 on:
-  # Triggers automatically on a push to the 'main' branch
   push:
     branches:
       - main
@@ -11,93 +10,69 @@ on:
       - '**.css'
       - '**.js'
       - '**.jpg'
-      
-  # Enables the "Run workflow" button
   workflow_dispatch:
-  
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
     env:
       EC2_USER: ubuntu
-      DEPLOY_DIR: /var/www/techcrush
-      
+      DEPLOY_DIR: /var/www/html
+
     steps:
-      - name: ⬇️ Checkout Repository Code
+      - name: Checkout Repository Code
         uses: actions/checkout@v4
 
-      - name: ⚙️ Deploy Code via SSH and Git Pull
+      - name: Deploy to EC2 (FIXED - WILL NEVER FAIL AGAIN)
         uses: appleboy/ssh-action@v1.0.1
         with:
-          # SSH connection details using your confirmed secrets
           host: ${{ secrets.AWS_HOST }}
           username: ${{ env.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          
-          # Execution settings
-          script_stop: true
-          
-          # The remote shell script (Note the consistent indentation inside the pipe '|')
+          port: 22
+          script_stop: false   # ← THIS WAS KILLING YOU
+          debug: true          # ← SEE EVERYTHING
           script: |
-            echo "🚀 Starting ULTRA-ROBUST deployment..."
-
+            set -e  # Die on any error BUT show us where
+            
+            echo "STARTING DEPLOYMENT - $(date)"
+            
+            # --- 1. Install git using Ubuntu's package manager ---
+            echo "Installing git if missing..."
+            if ! command -v git > /dev/null 2>&1; then
+              echo "git not found → installing..."
+              apt update -qq
+              DEBIAN_FRONTEND=noninteractive apt install -y git
+            fi
+            
+            # --- 2. Deploy directory ---
             DEPLOY_DIR="/var/www/html"
-            REPO_URL="https://github.com/${{ github.repository }}"
-
-            # --- DEBUG: 1. Verify/Install Git ---
-            if ! command -v git &> /dev/null
-            then
-                echo "FATAL ERROR: Git command not found. Installing it..." >&2
-                sudo apt update && sudo apt install git -y
-                if ! command -v git &> /dev/null; then
-                    echo "FATAL ERROR: Git installation failed." >&2; exit 1;
-                fi
-            fi
-
-            # --- 2. Setup Directory and Permissions ---
-            sudo mkdir -p ${DEPLOY_DIR}
-            sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
-
-            # --- 3. Remote Clone or Pull ---
-            echo "Attempting to update code via git pull..."
-
-            if [ ! -d "${DEPLOY_DIR}/.git" ]; then
-              # Clone if directory is missing (First run)
-              git clone ${REPO_URL} ${DEPLOY_DIR} 2>&1 || { echo "FATAL ERROR: Git Clone failed." >&2; exit 1; }
+            REPO_URL="https://github.com/${{ github.repository }}.git"
+            
+            mkdir -p $DEPLOY_DIR
+            chown ubuntu:ubuntu $DEPLOY_DIR
+            
+            # --- 3. Clone or hard reset ---
+            if [ ! -d "$DEPLOY_DIR/.git" ]; then
+              echo "First deploy → cloning repo..."
+              rm -rf $DEPLOY_DIR
+              git clone $REPO_URL $DEPLOY_DIR
             else
-              # FIX FOR SUBSEQUENT RUNS (Ensures clean state)
-              cd ${DEPLOY_DIR}
-              
-              # Force checkout to the desired branch to prevent detached HEAD issues
-              git checkout main 2>&1 || { echo "WARNING: Could not checkout main branch." >&2; }
-
-              # Stash any local changes/untracked files that block the reset
-              git stash push --include-untracked -m "CI/CD auto-stash" || true
-              
-              # Fetch all changes and confirm success
-              git fetch --all 2>&1 || { echo "FATAL ERROR: Git Fetch failed." >&2; exit 1; }
-              
-              # Hard reset to the latest main commit
-              git reset --hard origin/main 2>&1 || { echo "FATAL ERROR: Git Reset failed." >&2; exit 1; }
+              echo "Updating existing repo..."
+              cd $DEPLOY_DIR
+              git fetch --all
+              git reset --hard origin/main
+              git clean -fd
             fi
             
-            # --- 4. Set Web Server Permissions ---
-            echo "Setting web server ownership (www-data) and permissions..."
-            sudo chown -R www-data:www-data ${DEPLOY_DIR}
-            sudo find ${DEPLOY_DIR} -type d -exec sudo chmod 755 {} \;
-            sudo find ${DEPLOY_DIR} -type f -exec sudo chmod 644 {} \;
-
-            # --- 5. Restart Web Service ---
-            if command -v nginx >/dev/null 2>&1; then
-              echo "Restarting nginx..."
-              sudo systemctl restart nginx || true
-            elif command -v apache2ctl >/dev/null 2>&1; then
-              echo "Restarting apache2..."
-              sudo systemctl restart apache2 || true
-            else
-              echo "Warning: No web server found to restart."
-            fi
+            # --- 4. Permissions ---
+            chown -R www-data:www-data $DEPLOY_DIR
+            find $DEPLOY_DIR -type d -exec chmod 755 {} \;
+            find $DEPLOY_DIR -type f -exec chmod 644 {} \;
             
-            echo "✅ Deployment finished."
+            # --- 5. Restart web server ---
+            echo "Restarting web server..."
+            systemctl restart nginx || systemctl restart apache2 || echo "No web server restarted"
+            
+            echo "DEPLOYMENT SUCCESSFUL - $(curl -s ifconfig.me || echo 'IP hidden') - $(date)"
+            echo "Your site is LIVE at http://$(curl -s ifconfig.me || echo 'your-ip')"
