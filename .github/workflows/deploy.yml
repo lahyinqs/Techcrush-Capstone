@@ -42,10 +42,10 @@ jobs:
           # The remote shell script (Note the consistent indentation inside the pipe '|')
           script: |
             echo "🚀 Starting ULTRA-ROBUST deployment..."
-            
-            DEPLOY_DIR="/var/www/techcrush"
-            REPO_URL="https://github.com/${{ github.repository }}" 
-            
+
+            DEPLOY_DIR="/var/www/html"
+            REPO_URL="https://github.com/${{ github.repository }}"
+
             # --- DEBUG: 1. Verify/Install Git ---
             if ! command -v git &> /dev/null
             then
